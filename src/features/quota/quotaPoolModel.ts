@@ -141,7 +141,8 @@ export function recordedSeries(
     const after = total(at);
     if (before !== null && before !== after) {
       series.push({ t: at, v: before });
-      if (after - before >= MIN_LABELLED_GAIN) resets.push({ t: at, gain: after - before, v: after });
+      if (after - before >= MIN_LABELLED_GAIN)
+        resets.push({ t: at, gain: after - before, v: after });
     }
     series.push({ t: at, v: after });
   }
@@ -223,11 +224,13 @@ export function projectPool(
       t = at;
       const before = total();
       due.remaining = 100;
-      due.nextReset = Number.isFinite(due.periodMs) && due.periodMs > 0 ? at + due.periodMs : Infinity;
+      due.nextReset =
+        Number.isFinite(due.periodMs) && due.periodMs > 0 ? at + due.periodMs : Infinity;
       const after = total();
       series.push({ t: at, v: before });
       series.push({ t: at, v: after });
-      if (after - before >= MIN_LABELLED_GAIN) resets.push({ t: at, gain: after - before, v: after });
+      if (after - before >= MIN_LABELLED_GAIN)
+        resets.push({ t: at, gain: after - before, v: after });
     }
 
     const emptied = drain(state, burnPerHour * ((next - t) / HOUR_MS), next);
