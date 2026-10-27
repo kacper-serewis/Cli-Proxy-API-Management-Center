@@ -21,7 +21,12 @@ import {
   recordedSeries,
   WEEK_HOURS,
 } from '../quotaPoolModel';
-import type { PoolAccount, PoolHistoryPoint, PoolResetMark, PoolSeriesPoint } from '../quotaPoolModel';
+import type {
+  PoolAccount,
+  PoolHistoryPoint,
+  PoolResetMark,
+  PoolSeriesPoint,
+} from '../quotaPoolModel';
 import type { QuotaFileEntry } from '../logic';
 import type { QuotaCardState } from '../providers';
 import styles from './QuotaPool.module.scss';
@@ -78,10 +83,14 @@ function liveAccount(
 ): PoolAccount | null {
   if (!quota || (quota as { status?: string }).status !== 'success') return null;
   const window = ((quota as { windows?: WindowLike[] }).windows ?? [])
-    .filter((candidate) => windowIds.includes(candidate.id ?? '') && typeof candidate.usedPercent === 'number')
+    .filter(
+      (candidate) =>
+        windowIds.includes(candidate.id ?? '') && typeof candidate.usedPercent === 'number'
+    )
     .sort((a, b) => (b.periodHours ?? 0) - (a.periodHours ?? 0))[0];
   if (!window || typeof window.usedPercent !== 'number') return null;
-  const periodHours = window.periodHours && window.periodHours > 0 ? window.periodHours : WEEK_HOURS;
+  const periodHours =
+    window.periodHours && window.periodHours > 0 ? window.periodHours : WEEK_HOURS;
   const rolledOver = typeof window.resetAtMs === 'number' && window.resetAtMs <= now;
   return {
     name: entry.file.name,
@@ -137,21 +146,25 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
   }, [now, offset]);
   const endMs = startMs + SPAN_DAYS * DAY_MS;
 
-  const pools = useMemo(() => POOL_PROVIDERS.map((provider) => {
-    const providerEntries = entries.filter(
-      (entry) => entry.type === provider.type && !entry.file.disabled
-    );
-    const accounts = providerEntries
-      .map((entry) => {
-        const displayName = displayNameFor(entry.file.name);
-        return (
-          liveAccount(entry, quotaFor(entry), provider.windowIds, displayName, now) ??
-          accountFromHistory(entry.file.name, displayName, history.get(entry.file.name), now)
+  const pools = useMemo(
+    () =>
+      POOL_PROVIDERS.map((provider) => {
+        const providerEntries = entries.filter(
+          (entry) => entry.type === provider.type && !entry.file.disabled
         );
-      })
-      .filter((account): account is PoolAccount => account !== null);
-    return { ...provider, total: providerEntries.length, accounts };
-  }).filter((pool) => pool.total > 0), [entries, quotaFor, displayNameFor, history, now]);
+        const accounts = providerEntries
+          .map((entry) => {
+            const displayName = displayNameFor(entry.file.name);
+            return (
+              liveAccount(entry, quotaFor(entry), provider.windowIds, displayName, now) ??
+              accountFromHistory(entry.file.name, displayName, history.get(entry.file.name), now)
+            );
+          })
+          .filter((account): account is PoolAccount => account !== null);
+        return { ...provider, total: providerEntries.length, accounts };
+      }).filter((pool) => pool.total > 0),
+    [entries, quotaFor, displayNameFor, history, now]
+  );
 
   if (pools.length === 0) return null;
 
@@ -196,7 +209,9 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
         <PoolCard
           key={pool.type}
           label={pool.label}
-          color={TYPE_COLORS[pool.type]?.[resolvedTheme]?.text ?? TYPE_COLORS[pool.type]?.light.text}
+          color={
+            TYPE_COLORS[pool.type]?.[resolvedTheme]?.text ?? TYPE_COLORS[pool.type]?.light.text
+          }
           totalAccounts={pool.total}
           accounts={pool.accounts}
           history={history}
@@ -359,7 +374,9 @@ function PoolChart({
     return before ? [{ t: startMs, v: before.v }, ...visible] : visible;
   };
   const line = (series: PoolSeriesPoint[]) =>
-    series.map((point, i) => `${i === 0 ? 'M' : 'L'}${x(point.t).toFixed(1)},${y(point.v).toFixed(1)}`).join('');
+    series
+      .map((point, i) => `${i === 0 ? 'M' : 'L'}${x(point.t).toFixed(1)},${y(point.v).toFixed(1)}`)
+      .join('');
   const area = (series: PoolSeriesPoint[]) =>
     series.length < 2
       ? ''
@@ -367,7 +384,10 @@ function PoolChart({
 
   const recordedVisible = clip(recorded);
   const projectedVisible = clip(projected);
-  const days = Array.from({ length: Math.round((endMs - startMs) / DAY_MS) }, (_, i) => startMs + i * DAY_MS);
+  const days = Array.from(
+    { length: Math.round((endMs - startMs) / DAY_MS) },
+    (_, i) => startMs + i * DAY_MS
+  );
   const nowInView = inView(now);
 
   return (
@@ -390,7 +410,14 @@ function PoolChart({
             />
           ))}
           {days.map((day) => (
-            <line key={day} className={styles.gridDay} x1={x(day)} x2={x(day)} y1={0} y2={CHART_H} />
+            <line
+              key={day}
+              className={styles.gridDay}
+              x1={x(day)}
+              x2={x(day)}
+              y1={0}
+              y2={CHART_H}
+            />
           ))}
           <path className={styles.areaRecorded} d={area(recordedVisible)} />
           <path className={styles.areaProjected} d={area(projectedVisible)} />
