@@ -26,6 +26,7 @@ import { ProviderTabs } from '@/features/authFiles/components/ProviderTabs';
 import { QuotaHeader } from './components/QuotaHeader';
 import { QuotaCard } from './components/QuotaCard';
 import { QuotaTimeline } from './components/QuotaTimeline';
+import { QuotaPool } from './components/QuotaPool';
 import {
   CARD_ENTRANCE_BUDGET_MS,
   QUOTA_PAGE_SIZE,
@@ -345,6 +346,14 @@ export function QuotaPage() {
             onChange={handleTabChange}
           />
         </div>
+
+        {/* 池化额度覆盖全部凭证（不受分页/筛选影响）。 */}
+        <QuotaPool
+          entries={entries}
+          quotaFor={getQuota}
+          displayNameFor={displayNameFor}
+          resolvedTheme={resolvedTheme}
+        />
 
         <div className={styles.toolbar}>
           <div className={styles.search}>
