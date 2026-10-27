@@ -24,8 +24,8 @@ import {
   laneHasWindow,
   projectLane,
   projectResetCredits,
+  timelineCells,
   timelineSpan,
-  DAY_MS,
 } from '../quotaTimelineModel';
 import type { TimelineLane, TimelineMode } from '../quotaTimelineModel';
 import type { QuotaFileEntry } from '../logic';
@@ -130,16 +130,14 @@ export function QuotaTimeline({
   /** Weekly: one cell per day. Session: one per 6 hours. */
   const cells = useMemo(() => {
     const zoomed = mode === 'session';
-    const count = zoomed ? span.days * 4 : span.days;
-    const cellMs = (span.endMs - span.startMs) / count;
     const todayStart = new Date(now).setHours(0, 0, 0, 0);
 
-    return Array.from({ length: count }, (_, index) => {
-      const at = span.startMs + index * cellMs;
+    return timelineCells(span, zoomed).map(({ startMs: at, weight }) => {
       const date = new Date(at);
       const isDayStart = !zoomed || date.getHours() === 0;
       return {
         at,
+        weight,
         isDayStart,
         isToday: new Date(at).setHours(0, 0, 0, 0) === todayStart,
         isWeekend: date.getDay() === 0 || date.getDay() === 6,
@@ -167,7 +165,7 @@ export function QuotaTimeline({
             {t('quota_management.windows_title', { defaultValue: 'Quota windows' })}
           </h2>
           <p className={styles.range}>
-            {formatDay(span.startMs)} – {formatDay(span.endMs - DAY_MS)}
+            {formatDay(span.startMs)} – {formatDay(span.endMs - 1)}
             {' · '}
             {mode === 'weekly'
               ? t('quota_management.windows_span_weekly', { defaultValue: 'two weeks' })
@@ -242,6 +240,7 @@ export function QuotaTimeline({
                   <div
                     key={cell.at}
                     className={styles.axisCell}
+                    style={{ flexGrow: cell.weight }}
                     data-today={cell.isToday ? 1 : 0}
                     data-weekend={cell.isWeekend ? 1 : 0}
                     data-daystart={cell.isDayStart ? 1 : 0}
@@ -313,7 +312,7 @@ interface LaneProps {
   span: { startMs: number; endMs: number; days: number };
   now: number;
   mode: TimelineMode;
-  cells: { at: number; isWeekend: boolean; isDayStart: boolean }[];
+  cells: { at: number; weight: number; isWeekend: boolean; isDayStart: boolean }[];
   nowPercent: number | null;
   resolvedTheme: ResolvedTheme;
 }
@@ -369,6 +368,7 @@ function Lane({ lane, span, now, mode, cells, nowPercent, resolvedTheme }: LaneP
           {cells.map((cell) => (
             <span
               key={cell.at}
+              style={{ flexGrow: cell.weight }}
               data-weekend={cell.isWeekend ? 1 : 0}
               data-daystart={cell.isDayStart ? 1 : 0}
             />

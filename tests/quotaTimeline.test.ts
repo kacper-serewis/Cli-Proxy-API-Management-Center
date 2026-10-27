@@ -9,6 +9,7 @@ import {
   projectResetCredits,
   startOfDay,
   startOfWeek,
+  timelineCells,
   timelineSpan,
   windowsIn,
 } from '../src/features/quota/quotaTimelineModel';
@@ -95,6 +96,28 @@ describe('span boundaries', () => {
     const span = timelineSpan('weekly', 0, at(2026, 2, 10, 12));
     expect(new Date(span.startMs).getHours()).toBe(0);
     expect(new Date(span.endMs).getHours()).toBe(0);
+  });
+});
+
+describe('timelineCells', () => {
+  test('each day cell starts at local midnight of its own date', () => {
+    // Covers both US (2026-11-01) and EU (2026-10-25) fall-back days.
+    const span = timelineSpan('weekly', 0, at(2026, 9, 27, 22));
+    const cells = timelineCells(span, false);
+
+    expect(cells.length).toBe(14);
+    cells.forEach((cell, index) => {
+      const d = new Date(cell.startMs);
+      expect(d.getHours()).toBe(0);
+      expect(d.getDate()).toBe(new Date(2026, 9, 25 + index).getDate());
+    });
+    expect(cells.reduce((sum, cell) => sum + cell.weight, 0)).toBe(span.endMs - span.startMs);
+  });
+
+  test('session cells step every 6 hours', () => {
+    const span = timelineSpan('session', 0, at(2026, 9, 27, 22));
+    const hours = timelineCells(span, true).map((cell) => new Date(cell.startMs).getHours());
+    expect(hours).toEqual([0, 6, 12, 18, 0, 6, 12, 18, 0, 6, 12, 18]);
   });
 });
 

@@ -143,6 +143,30 @@ export function timelineSpan(
 }
 
 /**
+ * Axis cells for a span: one per local day, or one per 6 hours when zoomed.
+ *
+ * Boundaries come from calendar arithmetic, not an even split of the span, so
+ * a 23- or 25-hour DST day still starts at local midnight and keeps its own
+ * date. `weight` is the cell's real length, for sizing it against the bars.
+ */
+export function timelineCells(
+  span: { startMs: number; days: number },
+  zoomed: boolean
+): { startMs: number; weight: number }[] {
+  const perDay = zoomed ? 4 : 1;
+  const boundaries = Array.from({ length: span.days * perDay + 1 }, (_, index) => {
+    const d = new Date(span.startMs);
+    d.setDate(d.getDate() + Math.floor(index / perDay));
+    d.setHours((index % perDay) * (24 / perDay));
+    return d.getTime();
+  });
+  return boundaries.slice(0, -1).map((startMs, index) => ({
+    startMs,
+    weight: boundaries[index + 1] - startMs,
+  }));
+}
+
+/**
  * Project one lane's windows onto a span, clipped and positioned.
  *
  * Windows falling entirely outside the span are dropped rather than returned
