@@ -27,6 +27,7 @@ import { QuotaHeader } from './components/QuotaHeader';
 import { QuotaCard } from './components/QuotaCard';
 import { QuotaTimeline } from './components/QuotaTimeline';
 import { QuotaPool } from './components/QuotaPool';
+import { QuotaRouting } from './components/QuotaRouting';
 import {
   CARD_ENTRANCE_BUDGET_MS,
   QUOTA_PAGE_SIZE,
@@ -354,6 +355,7 @@ export function QuotaPage() {
           displayNameFor={displayNameFor}
           resolvedTheme={resolvedTheme}
         />
+        <QuotaRouting displayNameFor={displayNameFor} />
 
         <div className={styles.toolbar}>
           <div className={styles.search}>

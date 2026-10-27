@@ -20,7 +20,12 @@ const account = (name: string, remaining: number, resetInHours: number): PoolAcc
   periodHours: 168,
 });
 
-const point = (auth: string, hoursAgo: number, used: number, resetAtMs: number): PoolHistoryPoint => ({
+const point = (
+  auth: string,
+  hoursAgo: number,
+  used: number,
+  resetAtMs: number
+): PoolHistoryPoint => ({
   t: sec(now - hoursAgo * HOUR),
   auth,
   provider: 'claude',
@@ -80,7 +85,10 @@ describe('projectPool', () => {
 
 describe('recordedSeries', () => {
   test('applies recorded resets and ends on live values', () => {
-    const history = historyByAccount([point('a', 20, 0.8, now - 10 * HOUR), point('b', 20, 0.5, now + 50 * HOUR)]);
+    const history = historyByAccount([
+      point('a', 20, 0.8, now - 10 * HOUR),
+      point('b', 20, 0.5, now + 50 * HOUR),
+    ]);
     const accounts = [account('a', 95, 158), account('b', 45, 50)];
     const { series, resets } = recordedSeries(accounts, history, now - 24 * HOUR, now);
     // Before the first point values carry backwards: 20 + 50.
