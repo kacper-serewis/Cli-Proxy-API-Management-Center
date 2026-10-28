@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNow } from '@/hooks/useNow';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { quotaHistoryApi } from '@/services/api';
@@ -248,6 +249,7 @@ function PoolCard({
   startMs,
   endMs,
 }: PoolCardProps) {
+  const { t } = useTranslation();
   const capacity = accounts.length * 100;
   const remaining = accounts.reduce((sum, account) => sum + account.remaining, 0);
   const burn = useMemo(
@@ -329,6 +331,7 @@ function PoolCard({
         />
       )}
 
+      <p className={styles.note}>{t('adaptive_routing.pool_scenario')}</p>
       <footer className={styles.legend}>
         <span>Pool</span>
         <span className={styles.legendRecorded}>Recorded</span>
