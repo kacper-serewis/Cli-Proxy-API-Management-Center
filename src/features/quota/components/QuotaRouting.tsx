@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNow } from '@/hooks/useNow';
+import { useTranslation } from 'react-i18next';
 import { quotaHistoryApi, routingActivityApi } from '@/services/api';
 import type { RoutingActivityResponse, RoutingSession } from '@/services/api';
 import type { ResolvedTheme } from '@/types';
@@ -47,6 +48,7 @@ interface ChatGroup {
 
 export function QuotaRouting({ resolvedTheme }: QuotaRoutingProps) {
   const now = useNow();
+  const { t } = useTranslation();
   const [data, setData] = useState<RoutingActivityResponse | null>(null);
   const [latest, setLatest] = useState<Map<string, PoolHistoryPoint>>(new Map());
   const [unavailable, setUnavailable] = useState(false);
@@ -88,6 +90,7 @@ export function QuotaRouting({ resolvedTheme }: QuotaRoutingProps) {
 
   return (
     <>
+      {unavailable && <p role="status">{t('adaptive_routing.refresh_failed')}</p>}
       <QuotaAccounts
         queues={data?.next ?? {}}
         sessions={data?.sessions ?? []}
@@ -100,6 +103,9 @@ export function QuotaRouting({ resolvedTheme }: QuotaRoutingProps) {
           <h2 className={styles.title}>Chats</h2>
           <span className={styles.hint}>
             Which account each chat uses. Updates every 15s; starts empty after a proxy restart.
+            {Object.values(data?.next ?? {}).some((queue) =>
+              queue.some((candidate) => candidate.adaptive)
+            ) && <> {t('adaptive_routing.sticky')}</>}
           </span>
           {(hidden > 0 || showAll) && (
             <button type="button" className={styles.more} onClick={() => setShowAll((v) => !v)}>
@@ -123,7 +129,9 @@ export function QuotaRouting({ resolvedTheme }: QuotaRoutingProps) {
               {visible.length === 0 ? (
                 <tr>
                   <td colSpan={5} className={styles.empty}>
-                    {groups.length === 0 ? 'No chats since the proxy started.' : 'No chats in the last 2 hours.'}
+                    {groups.length === 0
+                      ? 'No chats since the proxy started.'
+                      : 'No chats in the last 2 hours.'}
                   </td>
                 </tr>
               ) : (
@@ -151,7 +159,11 @@ function groupChats(sessions: RoutingSession[]): ChatGroup[] {
   const groups = new Map<string, ChatGroup>();
   sessions.forEach((session) => {
     if (session.parent && ids.has(session.parent)) return;
-    groups.set(session.id, { main: session, subagents: [], lastSeen: Date.parse(session.last_seen) });
+    groups.set(session.id, {
+      main: session,
+      subagents: [],
+      lastSeen: Date.parse(session.last_seen),
+    });
   });
   sessions.forEach((session) => {
     const group = session.parent ? groups.get(session.parent) : undefined;
@@ -159,11 +171,21 @@ function groupChats(sessions: RoutingSession[]): ChatGroup[] {
     group.subagents.push(session);
     group.lastSeen = Math.max(group.lastSeen, Date.parse(session.last_seen));
   });
-  groups.forEach((group) => group.subagents.sort((a, b) => Date.parse(b.last_seen) - Date.parse(a.last_seen)));
+  groups.forEach((group) =>
+    group.subagents.sort((a, b) => Date.parse(b.last_seen) - Date.parse(a.last_seen))
+  );
   return [...groups.values()].sort((a, b) => b.lastSeen - a.lastSeen);
 }
 
-function SessionRow({ session, now, nested = false }: { session: RoutingSession; now: number; nested?: boolean }) {
+function SessionRow({
+  session,
+  now,
+  nested = false,
+}: {
+  session: RoutingSession;
+  now: number;
+  nested?: boolean;
+}) {
   const otherModels = Object.keys(session.models ?? {}).filter((model) => model !== session.model);
   const switches = session.switches ?? [];
   const shortId = session.id.replace(/^[a-z-]+:/i, '').slice(0, 8);
@@ -190,13 +212,16 @@ function SessionRow({ session, now, nested = false }: { session: RoutingSession;
               )
               .join('\n')}
           >
-            moved {switches.length}×, last from {shortAccountName(switches[switches.length - 1].from)}
+            moved {switches.length}×, last from{' '}
+            {shortAccountName(switches[switches.length - 1].from)}
           </div>
         )}
       </td>
       <td>
         <div className={styles.model}>{session.model}</div>
-        {otherModels.length > 0 && <div className={styles.chatMeta}>also {otherModels.join(', ')}</div>}
+        {otherModels.length > 0 && (
+          <div className={styles.chatMeta}>also {otherModels.join(', ')}</div>
+        )}
       </td>
       <td className={styles.num}>{session.requests}</td>
       <td className={styles.num}>{formatAgo(now - Date.parse(session.last_seen))}</td>
