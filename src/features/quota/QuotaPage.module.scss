@@ -21,6 +21,13 @@
   min-width: 0;
 }
 
+.sectionTitle {
+  margin: 10px 0 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
 /* 提供商导航独占一行，保留原生横向滚动。 */
 
 .tabsRow {

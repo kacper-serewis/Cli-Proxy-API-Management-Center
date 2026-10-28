@@ -54,6 +54,7 @@ import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER } from '@/utils/constants';
 import { isSupportedLanguage } from '@/utils/language';
 import { getSidebarShortcutLabel, isSidebarToggleShortcut } from '@/utils/sidebarShortcut';
 import type { Theme } from '@/types';
+import { applyForkNav } from './forkNav';
 
 const sidebarIcons: Record<string, ReactNode> = {
   dashboard: <IconSidebarDashboard size={18} />,
@@ -596,7 +597,7 @@ export function MainLayout() {
     icon: sidebarIcons.quickStart,
   };
 
-  const navGroups: SidebarNavGroup[] = [
+  const upstreamNavGroups: SidebarNavGroup[] = [
     {
       id: 'operate',
       labelKey: 'nav_groups.operate',
@@ -708,6 +709,7 @@ export function MainLayout() {
         ]
       : []),
   ];
+  const navGroups = applyForkNav(upstreamNavGroups);
   const navItems = navGroups.flatMap((group) => flattenNavItems(group.items));
   const navOrder = navItems.map((item) => item.path);
   const getRouteOrder = (pathname: string) => {
