@@ -28,6 +28,7 @@ import { QuotaCard } from './components/QuotaCard';
 import { QuotaTimeline } from './components/QuotaTimeline';
 import { QuotaPool } from './components/QuotaPool';
 import { QuotaRouting } from './components/QuotaRouting';
+import { shortAccountName } from './accountNames';
 import {
   CARD_ENTRANCE_BUDGET_MS,
   QUOTA_PAGE_SIZE,
@@ -66,7 +67,7 @@ const SKELETON_CARD_COUNT = 6;
  * Existing providers display filenames; Devin's card and timeline share an
  * identity-aware display label. Keep the filename fallback stable for memoization.
  */
-const displayNameFor = (name: string) => name;
+const displayNameFor = shortAccountName;
 
 export function QuotaPage() {
   const { t } = useTranslation();
@@ -187,6 +188,11 @@ export function QuotaPage() {
         entries.filter((entry) => entry.type === 'codex').map((entry) => entry.file)
       ),
     [entries]
+  );
+  // Only providers with credentials get a tab; the active one stays even when emptied.
+  const visibleTabIds = useMemo(
+    () => TAB_IDS.filter((id) => id === 'all' || id === tab || (tabCounts[id] ?? 0) > 0),
+    [tabCounts, tab]
   );
   const filteredEntries = useMemo(
     () => filterEntriesBySearch(filterEntriesByTab(entries, tab), search),
@@ -349,25 +355,27 @@ export function QuotaPage() {
       />
 
       <section className={styles.workbench}>
-        {/* 提供商导航与搜索工具栏分层，避免不同控件争夺视觉焦点。 */}
-        <div className={styles.tabsRow} data-reveal>
-          <ProviderTabs
-            types={TAB_IDS}
-            counts={tabCounts}
-            active={tab}
-            resolvedTheme={resolvedTheme}
-            onChange={handleTabChange}
-          />
-        </div>
-
-        {/* 池化额度覆盖全部凭证（不受分页/筛选影响）。 */}
+        {/* Live overview first: accounts, then chats, then the pooled history. These
+            cover every credential, so the provider tabs sit with the cards they filter. */}
+        <QuotaRouting resolvedTheme={resolvedTheme} />
         <QuotaPool
           entries={entries}
           quotaFor={getQuota}
           displayNameFor={displayNameFor}
           resolvedTheme={resolvedTheme}
         />
-        <QuotaRouting displayNameFor={displayNameFor} />
+
+        <h2 className={styles.sectionTitle}>Per credential</h2>
+        {/* 提供商导航与搜索工具栏分层，避免不同控件争夺视觉焦点。 */}
+        <div className={styles.tabsRow} data-reveal>
+          <ProviderTabs
+            types={visibleTabIds}
+            counts={tabCounts}
+            active={tab}
+            resolvedTheme={resolvedTheme}
+            onChange={handleTabChange}
+          />
+        </div>
 
         <div className={styles.toolbar}>
           <div className={styles.search}>
