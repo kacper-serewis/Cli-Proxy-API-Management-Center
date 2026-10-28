@@ -2354,6 +2354,7 @@
       "fallback": "No available account has confirmed safe surplus. Home is preferred as a last resort. Continuing may consume reserved capacity; this does not mean spare quota is available."
     },
     "sticky": "Chats stay pinned for cache reuse. The next-chat ranking only moves an existing chat when its reserve is threatened and a safe alternative exists.",
-    "refresh_failed": "Routing refresh failed. Showing the last successful decisions."
+    "refresh_failed": "Routing refresh failed. Showing the last successful decisions.",
+    "pool_scenario": "The dashed pool projection is a constant-pace scenario that spends the soonest-reset quota first. It does not simulate adaptive reserves or chat affinity; use Accounts above for actual routing decisions."
   }
 }

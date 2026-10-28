@@ -2360,6 +2360,7 @@
       "fallback": "Không tài khoản khả dụng nào có phần dư an toàn được xác nhận. Ưu tiên tài khoản chính như lựa chọn cuối. Tiếp tục có thể dùng vào dự trữ; đây không phải phần dư."
     },
     "sticky": "Chat giữ tài khoản để tái dùng bộ nhớ đệm. Chỉ chuyển chat hiện tại khi dự trữ bị đe dọa và có lựa chọn an toàn.",
-    "refresh_failed": "Không làm mới được định tuyến. Đang hiển thị quyết định gần nhất."
+    "refresh_failed": "Không làm mới được định tuyến. Đang hiển thị quyết định gần nhất.",
+    "pool_scenario": "Dự báo nét đứt giả định tốc độ không đổi và dùng hạn mức đặt lại sớm nhất trước. Nó không mô phỏng dự trữ thích ứng hay gắn chat; xem các tài khoản ở trên để biết quyết định thực tế."
   }
 }
