@@ -6,6 +6,8 @@
  */
 
 import type { CSSProperties } from 'react';
+import { useTranslation } from 'react-i18next';
+import { AdaptiveReason } from './AdaptiveReason';
 import type { ResolvedTheme } from '@/types';
 import type { RoutingCandidate, RoutingSession } from '@/services/api';
 import type { PoolHistoryPoint } from '@/features/quota/quotaPoolModel';
@@ -55,7 +57,17 @@ export interface QuotaAccountsProps {
   resolvedTheme: ResolvedTheme;
 }
 
-export function QuotaAccounts({ queues, sessions, latest, now, resolvedTheme }: QuotaAccountsProps) {
+export function QuotaAccounts({
+  queues,
+  sessions,
+  latest,
+  now,
+  resolvedTheme,
+}: QuotaAccountsProps) {
+  const { t } = useTranslation();
+  const adaptive = Object.values(queues).some((queue) =>
+    queue.some((candidate) => candidate.adaptive)
+  );
   const rows: AccountRow[] = [];
   const seen = new Set<string>();
   Object.entries(queues).forEach(([provider, queue]) =>
@@ -65,7 +77,8 @@ export function QuotaAccounts({ queues, sessions, latest, now, resolvedTheme }: 
     })
   );
   latest.forEach((point, file) => {
-    if (!seen.has(file)) rows.push({ file, provider: point.provider, rank: 99, chats: 0, subagents: 0 });
+    if (!seen.has(file))
+      rows.push({ file, provider: point.provider, rank: 99, chats: 0, subagents: 0 });
   });
   rows.forEach((row) => {
     row.point = latest.get(row.file);
@@ -83,10 +96,18 @@ export function QuotaAccounts({ queues, sessions, latest, now, resolvedTheme }: 
       <header className={styles.head}>
         <h2 className={styles.title}>Accounts</h2>
         <span className={styles.hint}>
-          New chats go to the account whose week resets soonest, skipping any at{' '}
-          {SHORT_SATURATION * 100}% of its 5-hour window. At {SHORT_DRAIN * 100}%, chats move to another account.
+          {adaptive ? (
+            t('adaptive_routing.intro')
+          ) : (
+            <>
+              New chats go to the account whose week resets soonest, skipping any at{' '}
+              {SHORT_SATURATION * 100}% of its 5-hour window. At {SHORT_DRAIN * 100}%, chats move to
+              another account.
+            </>
+          )}
         </span>
       </header>
+      {adaptive && <p className={styles.policy}>{t('adaptive_routing.policy')}</p>}
       <div className={styles.list}>
         {rows.map((row) => (
           <AccountLine key={row.file} row={row} now={now} resolvedTheme={resolvedTheme} />
@@ -96,29 +117,67 @@ export function QuotaAccounts({ queues, sessions, latest, now, resolvedTheme }: 
   );
 }
 
-function AccountLine({ row, now, resolvedTheme }: { row: AccountRow; now: number; resolvedTheme: ResolvedTheme }) {
+function AccountLine({
+  row,
+  now,
+  resolvedTheme,
+}: {
+  row: AccountRow;
+  now: number;
+  resolvedTheme: ResolvedTheme;
+}) {
+  const { t } = useTranslation();
+  const adaptive = row.candidate?.adaptive;
   const provider = row.provider || accountProvider(row.file);
   const colors = TYPE_COLORS[provider];
   const color = colors?.[resolvedTheme]?.text ?? colors?.light.text;
   const point = row.point;
 
-  const shortReset = point?.short_reset ? point.short_reset * 1000 : undefined;
-  const shortUsed =
-    shortReset !== undefined && shortReset <= now
-      ? 0
-      : (point?.short_used ?? row.candidate?.short_usage ?? undefined);
-  const longReset = point?.long_reset
-    ? point.long_reset * 1000
-    : row.candidate?.long_reset
-      ? Date.parse(row.candidate.long_reset)
+  const shortReset = adaptive?.short
+    ? Date.parse(adaptive.short.reset)
+    : point?.short_reset
+      ? point.short_reset * 1000
       : undefined;
-  const longUsed = longReset !== undefined && longReset <= now ? 0 : point?.long_used;
+  const shortUsed =
+    adaptive?.short?.used ??
+    (shortReset !== undefined && shortReset <= now
+      ? 0
+      : (point?.short_used ?? row.candidate?.short_usage ?? undefined));
+  const longReset = adaptive?.long
+    ? Date.parse(adaptive.long.reset)
+    : point?.long_reset
+      ? point.long_reset * 1000
+      : row.candidate?.long_reset
+        ? Date.parse(row.candidate.long_reset)
+        : undefined;
+  const longUsed =
+    adaptive?.long?.used ?? (longReset !== undefined && longReset <= now ? 0 : point?.long_used);
 
-  const status = accountStatus(row, shortUsed);
+  const status = adaptive
+    ? {
+        label: t(`adaptive_routing.status.${adaptive.reason}`, {
+          defaultValue: t('adaptive_routing.status.unknown'),
+        }),
+        tone: (row.candidate?.unavailable || adaptive.draining
+          ? 'bad'
+          : adaptive.reason === 'home' || adaptive.reason === 'surplus_selected'
+            ? 'next'
+            : adaptive.eligible
+              ? 'ok'
+              : 'warn') as Tone,
+      }
+    : accountStatus(row, shortUsed);
+  const shortStop = adaptive?.short
+    ? Math.max(0, 1 - adaptive.short.reserve - 0.05)
+    : SHORT_SATURATION;
+  const shortDrain = adaptive?.short ? Math.max(0, 1 - adaptive.short.reserve) : SHORT_DRAIN;
   const chatText =
     row.chats + row.subagents === 0
       ? 'no active chats'
-      : [row.chats > 0 && `${row.chats} chat${row.chats === 1 ? '' : 's'}`, row.subagents > 0 && `${row.subagents} subagent${row.subagents === 1 ? '' : 's'}`]
+      : [
+          row.chats > 0 && `${row.chats} chat${row.chats === 1 ? '' : 's'}`,
+          row.subagents > 0 && `${row.subagents} subagent${row.subagents === 1 ? '' : 's'}`,
+        ]
           .filter(Boolean)
           .join(' + ');
 
@@ -127,24 +186,38 @@ function AccountLine({ row, now, resolvedTheme }: { row: AccountRow; now: number
       <div className={styles.identity} title={row.file}>
         <span className={styles.dot} aria-hidden="true" />
         <span className={styles.name}>{shortAccountName(row.file)}</span>
-        <span className={styles.provider}>{provider}</span>
+        <span className={styles.provider}>
+          {adaptive?.home ? t('adaptive_routing.home') : provider}
+        </span>
       </div>
 
       <Meter
         label="5 hours"
         used={shortUsed}
-        warnAt={SHORT_SATURATION}
-        badAt={SHORT_DRAIN}
-        marks={[SHORT_SATURATION, SHORT_DRAIN]}
-        caption={shortReset && shortReset > now ? `resets in ${formatIn(shortReset - now)}` : undefined}
+        warnAt={shortStop}
+        badAt={shortDrain}
+        marks={[shortStop, shortDrain]}
+        caption={
+          adaptive?.short?.inactive
+            ? t('adaptive_routing.inactive')
+            : shortReset && shortReset > now
+              ? `resets in ${formatIn(shortReset - now)}`
+              : undefined
+        }
       />
       <Meter
         label="Week"
         used={longUsed}
-        warnAt={0.85}
-        badAt={LONG_SATURATION}
-        marks={[]}
-        caption={longReset && longReset > now ? `resets ${formatInstant(longReset)}` : undefined}
+        warnAt={adaptive?.long ? Math.max(0, 1 - adaptive.long.reserve - 0.02) : 0.85}
+        badAt={adaptive?.long ? Math.max(0, 1 - adaptive.long.reserve) : LONG_SATURATION}
+        marks={adaptive?.long ? [Math.max(0, 1 - adaptive.long.reserve)] : []}
+        caption={
+          adaptive?.long?.inactive
+            ? t('adaptive_routing.inactive')
+            : longReset && longReset > now
+              ? `resets ${formatInstant(longReset)}`
+              : undefined
+        }
       />
 
       <div className={styles.state}>
@@ -153,6 +226,7 @@ function AccountLine({ row, now, resolvedTheme }: { row: AccountRow; now: number
         </span>
         <span className={styles.chats}>{chatText}</span>
       </div>
+      {adaptive && <AdaptiveReason decision={adaptive} now={now} />}
     </article>
   );
 }
@@ -179,7 +253,9 @@ function Meter({
     <div className={styles.meter}>
       <div className={styles.meterTop}>
         <span className={styles.meterLabel}>{label}</span>
-        <span className={styles.meterValue}>{known ? `${Math.round(pct)}% used` : 'not seen yet'}</span>
+        <span className={styles.meterValue}>
+          {known ? `${Math.round(pct)}% used` : 'not seen yet'}
+        </span>
       </div>
       <div className={styles.track}>
         <div className={styles.fill} data-tone={tone} style={{ width: `${pct}%` }} />
@@ -193,16 +269,22 @@ function Meter({
 }
 
 /** What the router does with this account right now, in its own order of checks. */
-function accountStatus(row: AccountRow, shortUsed: number | undefined): { label: string; tone: Tone } {
+function accountStatus(
+  row: AccountRow,
+  shortUsed: number | undefined
+): { label: string; tone: Tone } {
   const candidate = row.candidate;
   if (!candidate) return { label: 'Not in routing', tone: 'muted' };
   if (candidate.unavailable) {
     return {
-      label: candidate.retry_after ? `Cooling down until ${formatInstant(Date.parse(candidate.retry_after))}` : 'Cooling down',
+      label: candidate.retry_after
+        ? `Cooling down until ${formatInstant(Date.parse(candidate.retry_after))}`
+        : 'Cooling down',
       tone: 'bad',
     };
   }
-  if (shortUsed !== undefined && shortUsed >= SHORT_DRAIN) return { label: 'Chats moving off', tone: 'bad' };
+  if (shortUsed !== undefined && shortUsed >= SHORT_DRAIN)
+    return { label: 'Chats moving off', tone: 'bad' };
   if (candidate.saturated) return { label: 'Skipped for new chats', tone: 'warn' };
   if (row.rank === 0) return { label: 'Gets the next new chat', tone: 'next' };
   if (!candidate.known) return { label: 'Quota not seen yet', tone: 'muted' };

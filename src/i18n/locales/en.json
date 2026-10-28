@@ -2310,5 +2310,50 @@
     "error": "Binding failed. Please start over.",
     "unsupported": "This backend does not support SIWC binding.",
     "expired": "The binding session expired. Please start over."
+  },
+  "adaptive_routing": {
+    "title": "Adaptive reserves",
+    "soonest": "Soonest reset",
+    "intro": "Protect expected demand, then borrow spare capacity. Home wins close ranking bands; quota nearing reset gets a boost.",
+    "policy": "Estimates include everyone’s usage, including yours. Fresh quota is read every 2 minutes. Forecasts use recent demand and weekday/weekend hourly history; quiet periods release capacity gradually. New chats leave a 5-point buffer in the 5-hour window and 2 points in the week. Existing chats move only when the reserve is threatened and a safe alternative exists. The queue is provider-wide; model support and credential priority can narrow it.",
+    "details": "Why this account?",
+    "home": "Home account",
+    "fresh": "Observed {{minutes}}m ago",
+    "stale": "Stale or unknown observation ({{minutes}}m)",
+    "learning": "Learning: defaults fill gaps in history",
+    "learned": "Forecast based on observed history",
+    "score": "Score {{score}} · band {{band}}",
+    "window": "Window",
+    "short": "5 hours",
+    "long": "Week",
+    "used": "Used",
+    "reserve": "Reserved for expected demand",
+    "spare": "Remaining after reserve",
+    "forecast": "{{window}}: forecast {{demand}} + buffer {{buffer}} (reserve capped at 95%). Recent pace {{recent}}/h; typical current-hour pace {{typical}}/h.",
+    "inactive": "Window starts on next use; forecast assumes a full window.",
+    "status": {
+      "home": "Next new chat · home",
+      "surplus_selected": "Next new chat · spare capacity",
+      "surplus": "Spare capacity available",
+      "reserved": "Protecting expected demand",
+      "stale": "Waiting for fresh quota",
+      "unknown": "Quota not known yet",
+      "exhausted": "Quota exhausted",
+      "cooldown": "Cooling down",
+      "fallback": "Last resort · reserves at risk"
+    },
+    "explain": {
+      "home": "Home has spare capacity and leads the ranking. Home preference resolves ties within the same 0.1-point score band.",
+      "surplus_selected": "This account leads among eligible accounts. Score = the smaller spare fraction across both windows, plus an expiry bonus of up to 0.25. Home preference applies within the same 0.1-point score band.",
+      "surplus": "This account has spare capacity, but another account ranks ahead. Warm chats stay here unless its reserve is threatened.",
+      "reserved": "Remaining quota is needed for forecast demand and a safety buffer. New chats avoid this account; existing chats stay until their reserve is threatened.",
+      "stale": "An old observation is not evidence of inactivity. This account cannot win over one with fresh, usable surplus.",
+      "unknown": "Both quota windows need a usable observation before surplus can be established.",
+      "exhausted": "At least one quota window is exhausted or rejected by the provider.",
+      "cooldown": "The credential is currently unavailable. A high surplus score does not bypass a cooldown.",
+      "fallback": "No available account has confirmed safe surplus. Home is preferred as a last resort. Continuing may consume reserved capacity; this does not mean spare quota is available."
+    },
+    "sticky": "Chats stay pinned for cache reuse. The next-chat ranking only moves an existing chat when its reserve is threatened and a safe alternative exists.",
+    "refresh_failed": "Routing refresh failed. Showing the last successful decisions."
   }
 }

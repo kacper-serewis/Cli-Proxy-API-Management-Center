@@ -2316,5 +2316,50 @@
     "error": "Liên kết thất bại. Hãy bắt đầu lại.",
     "unsupported": "Máy chủ này không hỗ trợ liên kết SIWC.",
     "expired": "Phiên liên kết đã hết hạn. Hãy bắt đầu lại."
+  },
+  "adaptive_routing": {
+    "title": "Dự trữ thích ứng",
+    "soonest": "Đặt lại sớm nhất",
+    "intro": "Giữ phần cho nhu cầu dự kiến, rồi mượn phần dư. Ưu tiên tài khoản chính trong cùng nhóm điểm; hạn mức sắp đặt lại được cộng điểm.",
+    "policy": "Ước tính gồm mức dùng của mọi người, kể cả bạn. Đọc hạn mức mỗi 2 phút. Dự báo dùng nhu cầu gần đây và lịch sử theo giờ ngày thường/cuối tuần; thời gian ít hoạt động giải phóng dự trữ dần. Chat mới chừa thêm 5 điểm phần trăm trong cửa sổ 5 giờ và 2 điểm trong tuần. Chat hiện tại chỉ chuyển khi dự trữ bị đe dọa và có lựa chọn an toàn. Hàng đợi theo nhà cung cấp; hỗ trợ mô hình và ưu tiên thông tin xác thực có thể thu hẹp lựa chọn.",
+    "details": "Vì sao chọn tài khoản này?",
+    "home": "Tài khoản chính",
+    "fresh": "Quan sát {{minutes}} phút trước",
+    "stale": "Dữ liệu cũ hoặc chưa rõ ({{minutes}} phút)",
+    "learning": "Đang học: dùng mặc định khi thiếu lịch sử",
+    "learned": "Dự báo từ lịch sử quan sát",
+    "score": "Điểm {{score}} · nhóm {{band}}",
+    "window": "Cửa sổ",
+    "short": "5 giờ",
+    "long": "Tuần",
+    "used": "Đã dùng",
+    "reserve": "Dự trữ cho nhu cầu",
+    "spare": "Còn lại sau dự trữ",
+    "forecast": "{{window}}: dự báo {{demand}} + đệm {{buffer}} (dự trữ tối đa 95%). Tốc độ gần đây {{recent}}/giờ; thông thường trong giờ này {{typical}}/giờ.",
+    "inactive": "Cửa sổ bắt đầu khi dùng tiếp; dự báo tính cả cửa sổ.",
+    "status": {
+      "home": "Chat mới tiếp theo · chính",
+      "surplus_selected": "Chat mới tiếp theo · phần dư",
+      "surplus": "Có phần dư",
+      "reserved": "Bảo vệ nhu cầu dự kiến",
+      "stale": "Chờ hạn mức mới",
+      "unknown": "Chưa biết hạn mức",
+      "exhausted": "Hết hạn mức",
+      "cooldown": "Đang chờ",
+      "fallback": "Cuối cùng · dự trữ có rủi ro"
+    },
+    "explain": {
+      "home": "Tài khoản chính có phần dư và đứng đầu. Ưu tiên tài khoản chính trong cùng nhóm điểm rộng 0,1.",
+      "surplus_selected": "Tài khoản đứng đầu các lựa chọn phù hợp. Điểm bằng tỷ lệ dư nhỏ hơn của hai cửa sổ, cộng tối đa 0,25 khi sắp đặt lại. Ưu tiên tài khoản chính trong cùng nhóm 0,1 điểm.",
+      "surplus": "Có phần dư nhưng tài khoản khác xếp trước. Chat đang dùng ở lại đến khi dự trữ bị đe dọa.",
+      "reserved": "Phần còn lại cần cho nhu cầu dự kiến và đệm an toàn. Chat mới tránh tài khoản; chat hiện tại ở lại đến khi dự trữ bị đe dọa.",
+      "stale": "Dữ liệu cũ không chứng minh ít hoạt động. Tài khoản này không vượt tài khoản có dữ liệu mới và phần dư dùng được.",
+      "unknown": "Cần quan sát dùng được ở cả hai cửa sổ để xác định phần dư.",
+      "exhausted": "Ít nhất một cửa sổ đã hết hoặc bị nhà cung cấp từ chối.",
+      "cooldown": "Thông tin xác thực hiện không khả dụng. Điểm cao không bỏ qua thời gian chờ.",
+      "fallback": "Không tài khoản khả dụng nào có phần dư an toàn được xác nhận. Ưu tiên tài khoản chính như lựa chọn cuối. Tiếp tục có thể dùng vào dự trữ; đây không phải phần dư."
+    },
+    "sticky": "Chat giữ tài khoản để tái dùng bộ nhớ đệm. Chỉ chuyển chat hiện tại khi dự trữ bị đe dọa và có lựa chọn an toàn.",
+    "refresh_failed": "Không làm mới được định tuyến. Đang hiển thị quyết định gần nhất."
   }
 }

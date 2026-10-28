@@ -36,7 +36,10 @@
 
 .account {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.4fr) minmax(180px, 1.4fr) minmax(190px, 1.2fr);
+  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1.4fr) minmax(180px, 1.4fr) minmax(
+      190px,
+      1.2fr
+    );
   align-items: center;
   gap: 8px 28px;
   padding: 12px 0;
@@ -186,4 +189,79 @@
 .chats {
   font-size: 12px;
   color: var(--text-tertiary);
+}
+
+.policy {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.reason {
+  grid-column: 1 / -1;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+
+  summary {
+    cursor: pointer;
+    color: var(--text-primary);
+    width: fit-content;
+    padding: 4px 0;
+  }
+
+  summary:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 3px;
+  }
+
+  p {
+    margin: 8px 0;
+  }
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  color: var(--text-tertiary);
+}
+
+.reasonTableWrap {
+  overflow-x: auto;
+}
+
+.reasonTable {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 700px;
+  margin-top: 10px;
+  font-variant-numeric: tabular-nums;
+
+  th,
+  td {
+    padding: 6px 12px;
+    text-align: right;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  th:first-child {
+    text-align: left;
+    padding-left: 0;
+  }
+}
+
+.formula {
+  color: var(--text-tertiary);
+}
+
+@media (max-width: 600px) {
+  .identity,
+  .state {
+    grid-column: 1 / -1;
+  }
+  .status {
+    white-space: normal;
+  }
 }

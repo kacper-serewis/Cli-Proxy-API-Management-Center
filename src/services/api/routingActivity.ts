@@ -22,7 +22,34 @@ export interface RoutingSession {
   switches?: RoutingSwitch[];
 }
 
+export interface ReserveWindow {
+  inactive: boolean;
+  used: number;
+  reset: string;
+  reserve: number;
+  spare: number;
+  forecast: number;
+  buffer: number;
+  recent_rate: number;
+  typical_rate: number;
+  learning: boolean;
+}
+
+export interface AdaptiveDecision {
+  home: boolean;
+  fresh: boolean;
+  observed_at: string;
+  eligible: boolean;
+  draining: boolean;
+  score: number;
+  band: number;
+  reason: string;
+  short?: ReserveWindow;
+  long?: ReserveWindow;
+}
+
 export interface RoutingCandidate {
+  adaptive?: AdaptiveDecision;
   auth: string;
   known: boolean;
   long_reset?: string;
@@ -38,6 +65,6 @@ export interface RoutingActivityResponse {
 }
 
 export const routingActivityApi = {
-  /** Per-session credential bindings and the soonest-reset queue for new sessions. */
+  /** Per-session credential bindings and the active strategy’s queue for new sessions. */
   get: () => apiClient.get<RoutingActivityResponse>('/observability/routing'),
 };
