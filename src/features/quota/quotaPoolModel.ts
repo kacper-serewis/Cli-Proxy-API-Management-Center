@@ -10,7 +10,7 @@
  * Pure functions only: `now` is always passed in.
  */
 
-import { HOUR_MS } from '@/utils/time/durations';
+import { DAY_MS, HOUR_MS } from '@/utils/time/durations';
 
 /** One observation recorded by the proxy. Usage is a 0..1 fraction; resets are unix seconds. */
 export interface PoolHistoryPoint {
@@ -56,8 +56,8 @@ export interface PoolProjection {
 
 export const WEEK_HOURS = 24 * 7;
 const PROJECTION_STEP_MS = 10 * 60 * 1000;
-/** Resets that give back less than this are not worth a label. */
-const MIN_LABELLED_GAIN = 0.5;
+/** Resets that give back less than this are not worth a label (usage readings jitter by 1). */
+const MIN_LABELLED_GAIN = 2;
 
 const clamp = (value: number) => Math.min(100, Math.max(0, value));
 
@@ -97,12 +97,15 @@ export function accountFromHistory(
 
 /** Value of one credential at `t`, carrying its first observation backwards. */
 function accountValueAt(points: PoolHistoryPoint[], t: number): number {
-  let current = points[0];
-  for (const point of points) {
-    if (point.t * 1000 > t) break;
-    current = point;
+  // Binary search: 30 days of history make a linear scan per event quadratic.
+  let lo = 0;
+  let hi = points.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (points[mid].t * 1000 <= t) lo = mid;
+    else hi = mid - 1;
   }
-  return remainingAt(current, t);
+  return remainingAt(points[lo], t);
 }
 
 /**
@@ -265,4 +268,83 @@ function drain(
     }
   }
   return emptied;
+}
+
+/**
+ * Reset labels that fit the chart: marks closer than `minGap` (a fraction of the view)
+ * merge into one label at the latest mark, carrying their summed gain.
+ */
+export function mergeResetLabels(
+  marks: PoolResetMark[],
+  startMs: number,
+  endMs: number,
+  minGap = 0.05
+): PoolResetMark[] {
+  const gapMs = (endMs - startMs) * minGap;
+  const merged: PoolResetMark[] = [];
+  for (const mark of [...marks]
+    .filter((candidate) => candidate.t >= startMs && candidate.t <= endMs)
+    .sort((a, b) => a.t - b.t)) {
+    const last = merged[merged.length - 1];
+    if (last && mark.t - last.t < gapMs) {
+      merged[merged.length - 1] = { t: mark.t, gain: last.gain + mark.gain, v: mark.v };
+    } else {
+      merged.push(mark);
+    }
+  }
+  return merged;
+}
+
+export interface PoolView {
+  id: string;
+  label: string;
+  spanMs: number;
+  /** Recorded history left of "now" in the current view. */
+  beforeMs: number;
+  /** Gridline spacing; also the label spacing unless `labelEvery` says otherwise. */
+  tickMs: number;
+  labelEvery: number;
+}
+
+export const POOL_VIEWS: PoolView[] = [
+  { id: '1d', label: '1d', spanMs: DAY_MS, beforeMs: 8 * HOUR_MS, tickMs: 3 * HOUR_MS, labelEvery: 1 },
+  { id: '3d', label: '3d', spanMs: 3 * DAY_MS, beforeMs: DAY_MS, tickMs: 6 * HOUR_MS, labelEvery: 2 },
+  { id: '7d', label: '7d', spanMs: 7 * DAY_MS, beforeMs: 2 * DAY_MS, tickMs: DAY_MS, labelEvery: 1 },
+  { id: '14d', label: '14d', spanMs: 14 * DAY_MS, beforeMs: 3 * DAY_MS, tickMs: DAY_MS, labelEvery: 1 },
+  { id: '30d', label: '30d', spanMs: 30 * DAY_MS, beforeMs: 16 * DAY_MS, tickMs: DAY_MS, labelEvery: 3 },
+];
+
+/** Snap `ms` down to a local tick boundary: midnight for day ticks, else whole tick hours. */
+function snapToTick(view: PoolView, ms: number): Date {
+  const d = new Date(ms);
+  if (view.tickMs >= DAY_MS) {
+    d.setHours(0, 0, 0, 0);
+  } else {
+    const stepHours = view.tickMs / HOUR_MS;
+    d.setMinutes(0, 0, 0);
+    d.setHours(Math.floor(d.getHours() / stepHours) * stepHours);
+  }
+  return d;
+}
+
+/** How far one press of ‹ or › moves: about half the span, in whole ticks. */
+export const viewStepMs = (view: PoolView) =>
+  Math.max(1, Math.floor(view.spanMs / 2 / view.tickMs)) * view.tickMs;
+
+/** Start of the view: `beforeMs` before now snapped to a tick, moved by `offset` steps. */
+export function viewStart(view: PoolView, now: number, offset: number): number {
+  return snapToTick(view, now - view.beforeMs).getTime() + offset * viewStepMs(view);
+}
+
+/** Gridline instants in [startMs, endMs), aligned to local tick boundaries. */
+export function viewTicks(view: PoolView, startMs: number, endMs: number): number[] {
+  const ticks: number[] = [];
+  // Step by calendar days/hours so DST shifts don't drift the gridlines off midnight.
+  for (let d = snapToTick(view, startMs); d.getTime() < endMs; ) {
+    if (d.getTime() >= startMs) ticks.push(d.getTime());
+    d = new Date(d);
+    if (view.tickMs >= DAY_MS) d.setDate(d.getDate() + view.tickMs / DAY_MS);
+    else d.setHours(d.getHours() + view.tickMs / HOUR_MS);
+  }
+  return ticks;
 }

@@ -180,6 +180,7 @@
 
 .plot {
   position: relative;
+  min-width: 0;
   height: 240px;
   margin-bottom: 24px;
 
@@ -262,6 +263,17 @@
   top: 100%;
   color: var(--text-primary);
   font-weight: 600;
+}
+
+.emptyDot {
+  position: absolute;
+  top: 100%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--pool-color, var(--text-primary));
+  transform: translate(-50%, -50%);
+  pointer-events: none;
 }
 
 .xAxis {

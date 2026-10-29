@@ -3,8 +3,13 @@ import {
   accountFromHistory,
   burnRatePerHour,
   historyByAccount,
+  mergeResetLabels,
+  POOL_VIEWS,
   projectPool,
   recordedSeries,
+  viewStart,
+  viewStepMs,
+  viewTicks,
 } from '../src/features/quota/quotaPoolModel';
 import type { PoolAccount, PoolHistoryPoint } from '../src/features/quota/quotaPoolModel';
 
@@ -107,5 +112,60 @@ describe('accountFromHistory', () => {
     expect(passed?.resetAtMs).toBe(sec(now - 2 * HOUR) * 1000 + 168 * HOUR);
     const pending = accountFromHistory('a', 'a', [point('a', 1, 0.6, now + 2 * HOUR)], now);
     expect(pending?.remaining).toBeCloseTo(40, 5);
+  });
+});
+
+describe('mergeResetLabels', () => {
+  test('merges marks closer than the gap and drops ones outside the view', () => {
+    const start = now;
+    const end = now + 100 * HOUR; // 5% gap = 5h
+    const labels = mergeResetLabels(
+      [
+        { t: now + 10 * HOUR, gain: 43, v: 150 },
+        { t: now + 12 * HOUR, gain: 3, v: 153 },
+        { t: now + 14 * HOUR, gain: 2, v: 155 },
+        { t: now + 40 * HOUR, gain: 100, v: 200 },
+        { t: now + 120 * HOUR, gain: 100, v: 200 },
+      ],
+      start,
+      end
+    );
+    expect(labels).toEqual([
+      { t: now + 14 * HOUR, gain: 48, v: 155 },
+      { t: now + 40 * HOUR, gain: 100, v: 200 },
+    ]);
+  });
+});
+
+describe('views', () => {
+  const byId = (id: string) => POOL_VIEWS.find((view) => view.id === id)!;
+
+  test('day views start on local midnight and step in whole days', () => {
+    const view = byId('7d');
+    const start = viewStart(view, now, 0);
+    expect(new Date(start).getHours()).toBe(0);
+    expect(start).toBeLessThanOrEqual(now - view.beforeMs);
+    expect(viewStepMs(view)).toBe(3 * 24 * HOUR);
+    const ticks = viewTicks(view, start, start + view.spanMs);
+    expect(ticks).toHaveLength(7);
+    expect(ticks.every((tick) => new Date(tick).getHours() === 0)).toBe(true);
+  });
+
+  test('hour views snap to their tick and keep now in view', () => {
+    const view = byId('1d');
+    const start = viewStart(view, now, 0);
+    expect(new Date(start).getHours() % 3).toBe(0);
+    expect(new Date(start).getMinutes()).toBe(0);
+    expect(now).toBeGreaterThan(start);
+    expect(now).toBeLessThan(start + view.spanMs);
+    expect(viewTicks(view, start, start + view.spanMs)).toHaveLength(8);
+  });
+
+  test('every view shows now at offset 0', () => {
+    for (const view of POOL_VIEWS) {
+      const start = viewStart(view, now, 0);
+      expect(now).toBeGreaterThan(start);
+      expect(now).toBeLessThan(start + view.spanMs);
+    }
   });
 });
