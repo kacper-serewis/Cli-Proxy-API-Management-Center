@@ -2428,5 +2428,51 @@
     "error": "Bağlama Başarısız Oldu. Lütfen Yeniden Başla.",
     "unsupported": "Bu Arka Uç SIWC Bağlamayı Desteklemiyor.",
     "expired": "Bağlama Oturumunun Süresi Doldu. Lütfen Yeniden Başla."
+  },
+  "adaptive_routing": {
+    "title": "Uyarlanabilir rezervler",
+    "soonest": "En yakın sıfırlama",
+    "intro": "Önce beklenen talebi korur, sonra boş kapasiteyi ödünç alır. Yakın sıralama bantlarında ana hesap kazanır; sıfırlanmaya yaklaşan kota öne çıkarılır.",
+    "policy": "Tahminler sizinki dahil herkesin kullanımını içerir. Güncel kota 2 dakikada bir okunur. Tahminler son talebi ve hafta içi/hafta sonu saatlik geçmişini kullanır; sakin dönemler kapasiteyi kademeli olarak serbest bırakır. Yeni sohbetler 5 saatlik pencerede 5 puan, haftalık pencerede 2 puan tampon bırakır. Mevcut sohbetler yalnızca rezerv tehlikeye girdiğinde ve güvenli bir alternatif varsa taşınır. Kuyruk sağlayıcı genelindedir; model desteği ve kimlik bilgisi önceliği onu daraltabilir.",
+    "details": "Neden bu hesap?",
+    "home": "Ana hesap",
+    "fresh": "{{minutes}} dk önce gözlemlendi",
+    "stale": "Eski veya bilinmeyen gözlem ({{minutes}} dk)",
+    "learning": "Öğreniyor: geçmişteki boşlukları varsayılanlar dolduruyor",
+    "learned": "Tahmin gözlemlenen geçmişe dayanıyor",
+    "score": "Puan {{score}} · bant {{band}}",
+    "window": "Pencere",
+    "short": "5 saat",
+    "long": "Hafta",
+    "used": "Kullanılan",
+    "reserve": "Beklenen talep için ayrılan",
+    "spare": "Rezervden sonra kalan",
+    "forecast": "{{window}}: tahmin {{demand}} + tampon {{buffer}} (rezerv en fazla %95). Son hız {{recent}}/sa; bu saatin tipik hızı {{typical}}/sa.",
+    "inactive": "Pencere bir sonraki kullanımda başlar; tahmin tam bir pencere varsayar.",
+    "status": {
+      "home": "Sonraki yeni sohbet · ana hesap",
+      "surplus_selected": "Sonraki yeni sohbet · boş kapasite",
+      "surplus": "Boş kapasite var",
+      "reserved": "Beklenen talep korunuyor",
+      "stale": "Güncel kota bekleniyor",
+      "unknown": "Kota henüz bilinmiyor",
+      "exhausted": "Kota tükendi",
+      "cooldown": "Bekleme süresinde",
+      "fallback": "Son çare · rezervler risk altında"
+    },
+    "explain": {
+      "home": "Ana hesapta boş kapasite var ve sıralamada önde. Aynı 0,1 puanlık bantta eşitlikleri ana hesap tercihi çözer.",
+      "surplus_selected": "Bu hesap uygun hesaplar arasında önde. Puan = iki penceredeki küçük boş oran, artı en fazla 0,25 sıfırlama bonusu. Ana hesap tercihi aynı 0,1 puanlık bantta geçerlidir.",
+      "surplus": "Bu hesapta boş kapasite var, ancak başka bir hesap daha önde. Sıcak sohbetler rezervleri tehlikeye girmedikçe burada kalır.",
+      "reserved": "Kalan kota tahmini talep ve güvenlik tamponu için gerekli. Yeni sohbetler bu hesaptan kaçınır; mevcut sohbetler rezerv tehlikeye girene kadar kalır.",
+      "stale": "Eski bir gözlem, etkinlik olmadığının kanıtı değildir. Bu hesap, güncel ve kullanılabilir fazlası olan bir hesabı geçemez.",
+      "unknown": "Fazla kapasite belirlenebilmesi için iki kota penceresinin de kullanılabilir bir gözlemi olmalı.",
+      "exhausted": "En az bir kota penceresi tükendi veya sağlayıcı tarafından reddedildi.",
+      "cooldown": "Kimlik bilgisi şu anda kullanılamıyor. Yüksek fazla puanı bekleme süresini atlatmaz.",
+      "fallback": "Hiçbir kullanılabilir hesapta güvenli fazla doğrulanmadı. Son çare olarak ana hesap tercih edilir. Devam etmek ayrılmış kapasiteyi tüketebilir; bu, boş kota olduğu anlamına gelmez."
+    },
+    "sticky": "Sohbetler önbellek yeniden kullanımı için sabit kalır. Sonraki sohbet sıralaması, mevcut bir sohbeti yalnızca rezervi tehlikeye girdiğinde ve güvenli bir alternatif varsa taşır.",
+    "refresh_failed": "Yönlendirme yenilenemedi. Son başarılı kararlar gösteriliyor.",
+    "pool_scenario": "Kesikli havuz projeksiyonu, önce en yakın sıfırlanan kotayı harcayan sabit hızlı bir senaryodur. Uyarlanabilir rezervleri veya sohbet bağlılığını simüle etmez; gerçek yönlendirme kararları için yukarıdaki Hesaplar bölümüne bakın."
   }
 }
