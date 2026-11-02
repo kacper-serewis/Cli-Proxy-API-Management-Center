@@ -298,20 +298,19 @@ export function mergeResetLabels(
 export interface PoolView {
   id: string;
   label: string;
+  /** The view ends at "now" and reaches this far back (N days to date). */
   spanMs: number;
-  /** Recorded history left of "now" in the current view. */
-  beforeMs: number;
   /** Gridline spacing; also the label spacing unless `labelEvery` says otherwise. */
   tickMs: number;
   labelEvery: number;
 }
 
 export const POOL_VIEWS: PoolView[] = [
-  { id: '1d', label: '1d', spanMs: DAY_MS, beforeMs: 8 * HOUR_MS, tickMs: 3 * HOUR_MS, labelEvery: 1 },
-  { id: '3d', label: '3d', spanMs: 3 * DAY_MS, beforeMs: DAY_MS, tickMs: 6 * HOUR_MS, labelEvery: 2 },
-  { id: '7d', label: '7d', spanMs: 7 * DAY_MS, beforeMs: 2 * DAY_MS, tickMs: DAY_MS, labelEvery: 1 },
-  { id: '14d', label: '14d', spanMs: 14 * DAY_MS, beforeMs: 3 * DAY_MS, tickMs: DAY_MS, labelEvery: 1 },
-  { id: '30d', label: '30d', spanMs: 30 * DAY_MS, beforeMs: 16 * DAY_MS, tickMs: DAY_MS, labelEvery: 3 },
+  { id: '1d', label: '1d', spanMs: DAY_MS, tickMs: 3 * HOUR_MS, labelEvery: 1 },
+  { id: '3d', label: '3d', spanMs: 3 * DAY_MS, tickMs: 6 * HOUR_MS, labelEvery: 2 },
+  { id: '7d', label: '7d', spanMs: 7 * DAY_MS, tickMs: DAY_MS, labelEvery: 1 },
+  { id: '14d', label: '14d', spanMs: 14 * DAY_MS, tickMs: DAY_MS, labelEvery: 1 },
+  { id: '30d', label: '30d', spanMs: 30 * DAY_MS, tickMs: DAY_MS, labelEvery: 3 },
 ];
 
 /** Snap `ms` down to a local tick boundary: midnight for day ticks, else whole tick hours. */
@@ -331,9 +330,9 @@ function snapToTick(view: PoolView, ms: number): Date {
 export const viewStepMs = (view: PoolView) =>
   Math.max(1, Math.floor(view.spanMs / 2 / view.tickMs)) * view.tickMs;
 
-/** Start of the view: `beforeMs` before now snapped to a tick, moved by `offset` steps. */
+/** Start of the view: `spanMs` before now, so offset 0 ends at now; moved by `offset` steps. */
 export function viewStart(view: PoolView, now: number, offset: number): number {
-  return snapToTick(view, now - view.beforeMs).getTime() + offset * viewStepMs(view);
+  return now - view.spanMs + offset * viewStepMs(view);
 }
 
 /** Gridline instants in [startMs, endMs), aligned to local tick boundaries. */
