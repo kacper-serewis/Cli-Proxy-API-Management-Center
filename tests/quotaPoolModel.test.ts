@@ -140,32 +140,30 @@ describe('mergeResetLabels', () => {
 describe('views', () => {
   const byId = (id: string) => POOL_VIEWS.find((view) => view.id === id)!;
 
-  test('day views start on local midnight and step in whole days', () => {
+  test('every view ends at now at offset 0 (N days to date)', () => {
+    for (const view of POOL_VIEWS) {
+      const start = viewStart(view, now, 0);
+      expect(start).toBe(now - view.spanMs);
+      expect(start + view.spanMs).toBe(now);
+    }
+  });
+
+  test('day views step in whole days and grid on local midnight', () => {
     const view = byId('7d');
-    const start = viewStart(view, now, 0);
-    expect(new Date(start).getHours()).toBe(0);
-    expect(start).toBeLessThanOrEqual(now - view.beforeMs);
     expect(viewStepMs(view)).toBe(3 * 24 * HOUR);
+    const start = viewStart(view, now, -1);
+    expect(start).toBe(now - view.spanMs - 3 * 24 * HOUR);
     const ticks = viewTicks(view, start, start + view.spanMs);
     expect(ticks).toHaveLength(7);
     expect(ticks.every((tick) => new Date(tick).getHours() === 0)).toBe(true);
   });
 
-  test('hour views snap to their tick and keep now in view', () => {
+  test('hour views grid on whole tick hours', () => {
     const view = byId('1d');
     const start = viewStart(view, now, 0);
-    expect(new Date(start).getHours() % 3).toBe(0);
-    expect(new Date(start).getMinutes()).toBe(0);
-    expect(now).toBeGreaterThan(start);
-    expect(now).toBeLessThan(start + view.spanMs);
-    expect(viewTicks(view, start, start + view.spanMs)).toHaveLength(8);
-  });
-
-  test('every view shows now at offset 0', () => {
-    for (const view of POOL_VIEWS) {
-      const start = viewStart(view, now, 0);
-      expect(now).toBeGreaterThan(start);
-      expect(now).toBeLessThan(start + view.spanMs);
-    }
+    const ticks = viewTicks(view, start, start + view.spanMs);
+    expect(ticks).toHaveLength(8);
+    expect(ticks.every((tick) => new Date(tick).getHours() % 3 === 0)).toBe(true);
+    expect(ticks.every((tick) => new Date(tick).getMinutes() === 0)).toBe(true);
   });
 });

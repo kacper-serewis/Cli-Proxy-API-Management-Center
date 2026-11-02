@@ -476,7 +476,8 @@ function PoolChart({
 
         {nowInView && (
           <div className={styles.now} style={{ left: `${pct(now)}%` }}>
-            <span>Now</span>
+            {/* At offset 0 now is the right edge; keep the label inside the plot. */}
+            <span style={{ transform: `translateX(${edgeShift(pct(now))})` }}>Now</span>
           </div>
         )}
         {resetLabels.map((mark) => (
