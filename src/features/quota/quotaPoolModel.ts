@@ -163,7 +163,9 @@ export function burnRatePerHour(
   accounts: PoolAccount[],
   history: Map<string, PoolHistoryPoint[]>,
   windowHours: number,
-  now: number
+  now: number,
+  /** 5h windows: usage in a window that follows an expired one counts from zero. */
+  fromZero = false
 ): number {
   const startMs = now - windowHours * HOUR_MS;
   let consumed = 0;
@@ -180,6 +182,7 @@ export function burnRatePerHour(
       }
       if (point.t * 1000 > now) break;
       if (prev && prev.reset === current.reset) consumed += Math.max(0, current.used - prev.used);
+      else if (fromZero && prev && prev.reset <= point.t) consumed += current.used;
       prev = current;
     }
     if (prev && account.resetAtMs !== null && Math.round(account.resetAtMs / 1000) === prev.reset) {
@@ -338,13 +341,17 @@ const slotOf = (ms: number) => {
  * Points one credential used, as [time, points] at the observation that revealed them.
  * Readings jitter by a point, so only a new high within a reset window counts.
  */
-function usageEvents(points: PoolHistoryPoint[]): [number, number][] {
+function usageEvents(points: PoolHistoryPoint[], fromZero = false): [number, number][] {
   const events: [number, number][] = [];
   let reset: number | null = null;
   let high = 0;
   for (const point of points) {
     const used = point.long_used * 100;
     if (reset !== point.long_reset) {
+      // 5h windows: one that follows an expired window starts from zero.
+      if (fromZero && reset !== null && reset <= point.t && used > 0) {
+        events.push([point.t * 1000, used]);
+      }
       reset = point.long_reset;
       high = used;
       continue;
@@ -481,6 +488,105 @@ export function projectedRate(
       profileRate(profile, t) * (1 + (factor - 1) * 0.5 ** (elapsed / RECENT_HALF_LIFE_MS)) +
       unexplained * 0.5 ** (elapsed / SESSION_HALF_LIFE_MS)
     );
+  };
+}
+
+/** The 5h window: how long the current burn itself is assumed to carry on. */
+const CURRENT_HALF_LIFE_MS = 1.5 * HOUR_MS;
+export const SHORT_PERIOD_HOURS = 5;
+
+/**
+ * The 5h window as pool history: the same points with usage and reset taken from the short
+ * window, so the pool functions above work on it. A point without a short reset is an idle
+ * window: full, and its reset 0 never comes.
+ */
+export function shortWindowHistory(
+  history: Map<string, PoolHistoryPoint[]>
+): Map<string, PoolHistoryPoint[]> {
+  const out = new Map<string, PoolHistoryPoint[]>();
+  for (const [name, points] of history) {
+    out.set(
+      name,
+      points.map((point) => ({
+        ...point,
+        long_used: point.short_reset ? (point.short_used ?? 0) : 0,
+        long_reset: point.short_reset ?? 0,
+      }))
+    );
+  }
+  return out;
+}
+
+/**
+ * Current 5h state of a credential from its newest point in `shortWindowHistory`. An expired
+ * or idle window is full and has no reset: the next one only starts on first use.
+ */
+export function shortAccountFromHistory(
+  name: string,
+  displayName: string,
+  points: PoolHistoryPoint[] | undefined,
+  now: number
+): PoolAccount | null {
+  const latest = points?.[points.length - 1];
+  if (!latest) return null;
+  const running = latest.long_reset * 1000 > now;
+  return {
+    name,
+    displayName,
+    remaining: running ? clamp(100 - latest.long_used * 100) : 100,
+    resetAtMs: running ? latest.long_reset * 1000 : null,
+    periodHours: SHORT_PERIOD_HOURS,
+  };
+}
+
+/**
+ * How many 5h-window points one weekly point costs, from what the pool's credentials burned
+ * in both windows lately. It turns the weekly rhythm into 5h points.
+ */
+export function shortPerLongPoint(
+  accounts: PoolAccount[],
+  history: Map<string, PoolHistoryPoint[]>,
+  shortHistory: Map<string, PoolHistoryPoint[]>,
+  now: number
+): number | null {
+  const total = (source: Map<string, PoolHistoryPoint[]>, fromZero: boolean) =>
+    accounts
+      .flatMap((account) => usageEvents(source.get(account.name) ?? [], fromZero))
+      .reduce((sum, [t, amount]) => (t > now - LEVEL_WINDOW_MS && t <= now ? sum + amount : sum), 0);
+  const long = total(history, false);
+  const short = total(shortHistory, true);
+  // A handful of weekly points is too coarse to divide by.
+  return long >= 5 && short > 0 ? short / long : null;
+}
+
+/**
+ * Burn for the 5h window, in its own points per hour. It starts at the current burn and keeps
+ * a share of it that halves every 1.5h; the rest follows the rhythm (`scale` × profile),
+ * scaled by how today compares with the usual and fading like the weekly one. So it reacts
+ * to what is happening now, yet winds down towards the night and picks up before a working
+ * morning. Without a profile or scale it is the constant recent rate.
+ */
+export function reactiveRate(
+  profile: UsageProfile | null,
+  scale: number | null,
+  recentBurn: number,
+  recentHours: number,
+  now: number
+): (t: number) => number {
+  if (!profile || scale === null) return () => recentBurn;
+  const samples = Math.max(1, Math.round(recentHours * 4));
+  let usual = 0;
+  for (let i = 0; i < samples; i++) {
+    usual += scale * profileRate(profile, now - ((i + 0.5) / samples) * recentHours * HOUR_MS);
+  }
+  usual /= samples;
+  const factor = usual > 0 ? Math.min(MAX_RECENT_FACTOR, recentBurn / usual) : 1;
+  return (t) => {
+    const elapsed = Math.max(0, t - now);
+    const current = 0.5 ** (elapsed / CURRENT_HALF_LIFE_MS);
+    const rhythm =
+      scale * profileRate(profile, t) * (1 + (factor - 1) * 0.5 ** (elapsed / RECENT_HALF_LIFE_MS));
+    return current * recentBurn + (1 - current) * rhythm;
   };
 }
 

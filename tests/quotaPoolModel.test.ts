@@ -8,7 +8,11 @@ import {
   profileRate,
   projectedRate,
   projectPool,
+  reactiveRate,
   recordedSeries,
+  shortAccountFromHistory,
+  shortPerLongPoint,
+  shortWindowHistory,
   viewScale,
   viewTicks,
 } from '../src/features/quota/quotaPoolModel';
@@ -259,5 +263,83 @@ describe('usage profile', () => {
   test('without a profile the recent rate stays constant', () => {
     const rate = projectedRate(null, 3, 1, now);
     expect(rate(now + 50 * HOUR)).toBe(3);
+  });
+});
+
+describe('5h pool', () => {
+  const at = (day: number, hour: number, minute = 0) =>
+    new Date(2026, 10, day, hour, minute).getTime();
+  const weekReset = at(30, 0);
+  const pool: PoolAccount[] = [
+    { name: 'a', displayName: 'a', remaining: 50, resetAtMs: weekReset, periodHours: 168 },
+  ];
+  /** A working day: one weekly point and eight 5h points per hour, over two 5h windows. */
+  const workday = (day: number, startUsed: number): PoolHistoryPoint[] =>
+    Array.from({ length: 8 }, (_, i) => {
+      const hour = 9 + i;
+      return {
+        t: sec(at(day, hour, 30)),
+        auth: 'a',
+        provider: 'claude',
+        long_used: (startUsed + i + 1) / 100,
+        long_reset: sec(weekReset),
+        short_used: (hour < 14 ? hour - 8 : hour - 13) * 0.08,
+        short_reset: sec(hour < 14 ? at(day, 14) : at(day, 19)),
+      };
+    });
+  const days = [2, 3, 4, 5, 6, 9, 10, 11];
+  const points = days.flatMap((day, i) => workday(day, i * 8));
+  const history = historyByAccount(points);
+  const shortHistory = shortWindowHistory(history);
+  const learnedAt = at(11, 22);
+  const profile = learnUsageProfile([points], pool, history, learnedAt)!;
+
+  test('reads the 5h window from the same history', () => {
+    const list = shortHistory.get('a')!;
+    expect(list.at(-1)).toMatchObject({ long_used: 0.24, long_reset: sec(at(11, 19)) });
+    // The last window expired at 19:00: idle, full, and no reset until it is used again.
+    expect(shortAccountFromHistory('a', 'a', list, learnedAt)).toMatchObject({
+      remaining: 100,
+      resetAtMs: null,
+      periodHours: 5,
+    });
+    expect(shortAccountFromHistory('a', 'a', list, at(11, 17))).toMatchObject({
+      remaining: 76,
+      resetAtMs: at(11, 19),
+    });
+    // A point without a 5h window is an idle one.
+    const idle = shortWindowHistory(
+      historyByAccount([{ t: 1, auth: 'b', provider: 'claude', long_used: 0.5, long_reset: 99 }])
+    );
+    expect(idle.get('b')![0]).toMatchObject({ long_used: 0, long_reset: 0 });
+  });
+
+  test('burn counts a new 5h window from zero', () => {
+    const accounts = [shortAccountFromHistory('a', 'a', shortHistory.get('a'), at(11, 17))!];
+    // 14:30 opens a window at 8 (from zero), then 16 and 24 by 16:30.
+    expect(burnRatePerHour(accounts, shortHistory, 3, at(11, 17), true)).toBeCloseTo(24 / 3, 5);
+    expect(burnRatePerHour(accounts, shortHistory, 3, at(11, 17))).toBeCloseTo(16 / 3, 5);
+  });
+
+  test('learns what a weekly point costs in 5h points', () => {
+    expect(shortPerLongPoint(pool, history, shortHistory, learnedAt)).toBeCloseTo(8, 0);
+    expect(shortPerLongPoint(pool, new Map(), shortHistory, learnedAt)).toBeNull();
+  });
+
+  test('leans on the current burn, then follows the rhythm', () => {
+    const busy = reactiveRate(profile, 8, 16, 1, at(11, 13));
+    expect(busy(at(11, 13))).toBeCloseTo(16, 5);
+    expect(busy(at(11, 14, 30))).toBeGreaterThan(13);
+    // A late session: half is still there after an hour and a half, then the night is quiet.
+    const late = reactiveRate(profile, 8, 16, 1, learnedAt);
+    expect(late(at(11, 23, 30))).toBeCloseTo(8, 5);
+    expect(late(at(12, 3))).toBeLessThan(2);
+    // Idle before work: the working morning still shows up.
+    const idle = reactiveRate(profile, 8, 0, 1, at(12, 6));
+    expect(idle(at(12, 6))).toBe(0);
+    expect(idle(at(12, 10))).toBeGreaterThan(4);
+    // Nothing learned: the constant recent rate.
+    expect(reactiveRate(null, 8, 5, 1, learnedAt)(at(12, 3))).toBe(5);
+    expect(reactiveRate(profile, null, 5, 1, learnedAt)(at(12, 3))).toBe(5);
   });
 });
