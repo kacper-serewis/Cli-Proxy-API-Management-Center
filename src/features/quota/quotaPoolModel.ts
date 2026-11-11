@@ -341,12 +341,33 @@ export interface UsageProfile {
 const MIN_PROFILE_HOURS = 48;
 /** The level follows how the pool has been used lately, not how it was used a month ago. */
 const LEVEL_WINDOW_MS = 14 * DAY_MS;
-/** How fast "busier (or quieter) than usual right now" fades back to the learned rhythm. */
-const RECENT_HALF_LIFE_MS = 3 * HOUR_MS;
-/** The recent pace counts for at most this many times the usual pace. */
-const MAX_RECENT_FACTOR = 4;
-/** How long burn at a normally idle hour is assumed to carry on. */
-const SESSION_HALF_LIFE_MS = HOUR_MS;
+/** How the recent burn is blended into the learned rhythm. */
+export interface RateTuning {
+  /** How fast "busier (or quieter) than usual right now" fades back to the learned rhythm. */
+  recentHalfLifeMs: number;
+  /** The same for the 5h window, where a busy day stays busy for longer. */
+  shortRecentHalfLifeMs: number;
+  /** The recent pace counts for at most this many times the usual pace. */
+  maxRecentFactor: number;
+  /** How long burn at a normally idle hour is assumed to carry on. */
+  sessionHalfLifeMs: number;
+  /** The 5h window: how long the current burn itself is assumed to carry on. */
+  currentHalfLifeMs: number;
+}
+
+/**
+ * Defaults, chosen with `scripts/poolBacktest.ts` on the recorded history (2026-11-11, 15 days):
+ * the rhythm carries the projection and the recent pace only nudges it. Stronger or longer
+ * nudges predicted worse. Re-run the backtest before changing these, and keep the menu bar
+ * app's `QuotaModel.swift` on the same values.
+ */
+export const RATE_TUNING: RateTuning = {
+  recentHalfLifeMs: 1.5 * HOUR_MS,
+  shortRecentHalfLifeMs: 6 * HOUR_MS,
+  maxRecentFactor: 2,
+  sessionHalfLifeMs: 0.5 * HOUR_MS,
+  currentHalfLifeMs: HOUR_MS,
+};
 
 const isWeekend = (d: Date) => d.getDay() === 0 || d.getDay() === 6;
 /** Slot 0..23 is a weekday hour, 24..47 a weekend hour, in local time. */
@@ -359,7 +380,7 @@ const slotOf = (ms: number) => {
  * Points one credential used, as [time, points] at the observation that revealed them.
  * Readings jitter by a point, so only a new high within a reset window counts.
  */
-function usageEvents(points: PoolHistoryPoint[], fromZero = false): [number, number][] {
+export function usageEvents(points: PoolHistoryPoint[], fromZero = false): [number, number][] {
   const events: [number, number][] = [];
   let reset: number | null = null;
   let high = 0;
@@ -489,7 +510,8 @@ export function projectedRate(
   profile: UsageProfile | null,
   recentBurn: number,
   recentHours: number,
-  now: number
+  now: number,
+  tuning: RateTuning = RATE_TUNING
 ): (t: number) => number {
   if (!profile) return () => recentBurn;
   const samples = Math.max(1, Math.round(recentHours * 4));
@@ -498,19 +520,17 @@ export function projectedRate(
     usual += profileRate(profile, now - ((i + 0.5) / samples) * recentHours * HOUR_MS);
   }
   usual /= samples;
-  const factor = usual > 0 ? Math.min(MAX_RECENT_FACTOR, recentBurn / usual) : 1;
+  const factor = usual > 0 ? Math.min(tuning.maxRecentFactor, recentBurn / usual) : 1;
   const unexplained = Math.max(0, recentBurn - factor * usual);
   return (t) => {
     const elapsed = Math.max(0, t - now);
     return (
-      profileRate(profile, t) * (1 + (factor - 1) * 0.5 ** (elapsed / RECENT_HALF_LIFE_MS)) +
-      unexplained * 0.5 ** (elapsed / SESSION_HALF_LIFE_MS)
+      profileRate(profile, t) * (1 + (factor - 1) * 0.5 ** (elapsed / tuning.recentHalfLifeMs)) +
+      unexplained * 0.5 ** (elapsed / tuning.sessionHalfLifeMs)
     );
   };
 }
 
-/** The 5h window: how long the current burn itself is assumed to carry on. */
-const CURRENT_HALF_LIFE_MS = 1.5 * HOUR_MS;
 export const SHORT_PERIOD_HOURS = 5;
 
 /**
@@ -580,7 +600,7 @@ export function shortPerLongPoint(
 
 /**
  * Burn for the 5h window, in its own points per hour. It starts at the current burn and keeps
- * a share of it that halves every 1.5h; the rest follows the rhythm (`scale` × profile),
+ * a share of it that halves every hour; the rest follows the rhythm (`scale` × profile),
  * scaled by how today compares with the usual and fading like the weekly one. So it reacts
  * to what is happening now, yet winds down towards the night and picks up before a working
  * morning. Without a profile or scale it is the constant recent rate.
@@ -590,7 +610,8 @@ export function reactiveRate(
   scale: number | null,
   recentBurn: number,
   recentHours: number,
-  now: number
+  now: number,
+  tuning: RateTuning = RATE_TUNING
 ): (t: number) => number {
   if (!profile || scale === null) return () => recentBurn;
   const samples = Math.max(1, Math.round(recentHours * 4));
@@ -599,12 +620,14 @@ export function reactiveRate(
     usual += scale * profileRate(profile, now - ((i + 0.5) / samples) * recentHours * HOUR_MS);
   }
   usual /= samples;
-  const factor = usual > 0 ? Math.min(MAX_RECENT_FACTOR, recentBurn / usual) : 1;
+  const factor = usual > 0 ? Math.min(tuning.maxRecentFactor, recentBurn / usual) : 1;
   return (t) => {
     const elapsed = Math.max(0, t - now);
-    const current = 0.5 ** (elapsed / CURRENT_HALF_LIFE_MS);
+    const current = 0.5 ** (elapsed / tuning.currentHalfLifeMs);
     const rhythm =
-      scale * profileRate(profile, t) * (1 + (factor - 1) * 0.5 ** (elapsed / RECENT_HALF_LIFE_MS));
+      scale *
+      profileRate(profile, t) *
+      (1 + (factor - 1) * 0.5 ** (elapsed / tuning.shortRecentHalfLifeMs));
     return current * recentBurn + (1 - current) * rhythm;
   };
 }

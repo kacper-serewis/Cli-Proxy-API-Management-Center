@@ -244,14 +244,19 @@ describe('usage profile', () => {
     // Burning 4 points/h at 22:00, when the profile expects nothing: a short session.
     const late = projectedRate(profile, 4, 1, learnedAt);
     expect(late(learnedAt)).toBeCloseTo(4, 5);
-    expect(late(learnedAt + HOUR)).toBeCloseTo(2, 5);
-    expect(late(at(12, 3))).toBeLessThan(0.2);
+    expect(late(learnedAt + HOUR / 2)).toBeCloseTo(2, 5);
+    expect(late(at(12, 3))).toBeLessThan(0.01);
     expect(late(at(13, 13))).toBeCloseTo(1, 1);
     // Twice the usual pace at 13:00 scales the rhythm, so the night after stays flat.
     const busy = projectedRate(profile, 2, 1, at(11, 13));
     expect(busy(at(11, 13))).toBeCloseTo(2, 1);
-    expect(busy(at(11, 16))).toBeCloseTo(1.5 * profile.weekday[16], 5);
-    expect(busy(at(12, 3))).toBe(0);
+    expect(busy(at(11, 14, 30))).toBeCloseTo(1.5 * profile.weekday[14], 5);
+    // Four times the usual counts as twice; the rest is a session that is gone in three hours.
+    expect(projectedRate(profile, 4, 1, at(11, 13))(at(11, 16))).toBeCloseTo(
+      1.25 * profile.weekday[16] + 2 / 64,
+      5
+    );
+    expect(busy(at(12, 3))).toBeLessThan(1e-9);
 
     const projection = projectPool(pool, projectedRate(profile, 0, 1, learnedAt), learnedAt, at(13, 0));
     const value = (ms: number) => projection.series.filter((p) => p.t <= ms).at(-1)!.v;
@@ -355,10 +360,11 @@ describe('5h pool', () => {
   test('leans on the current burn, then follows the rhythm', () => {
     const busy = reactiveRate(profile, 8, 16, 1, at(11, 13));
     expect(busy(at(11, 13))).toBeCloseTo(16, 5);
-    expect(busy(at(11, 14, 30))).toBeGreaterThan(13);
-    // A late session: half is still there after an hour and a half, then the night is quiet.
+    // An hour on, half of it is the current burn and half the (busier than usual) rhythm.
+    expect(busy(at(11, 14))).toBeGreaterThan(8 + 0.5 * 8 * profile.weekday[14]);
+    // A late session: half is still there after an hour, then the night is quiet.
     const late = reactiveRate(profile, 8, 16, 1, learnedAt);
-    expect(late(at(11, 23, 30))).toBeCloseTo(8, 5);
+    expect(late(at(11, 23))).toBeCloseTo(8, 5);
     expect(late(at(12, 3))).toBeLessThan(2);
     // Idle before work: the working morning still shows up.
     const idle = reactiveRate(profile, 8, 0, 1, at(12, 6));
