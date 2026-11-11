@@ -302,6 +302,7 @@ describe('5h pool', () => {
       remaining: 100,
       resetAtMs: null,
       periodHours: 5,
+      startsOnUse: true,
     });
     expect(shortAccountFromHistory('a', 'a', list, at(11, 17))).toMatchObject({
       remaining: 76,
@@ -312,6 +313,31 @@ describe('5h pool', () => {
       historyByAccount([{ t: 1, auth: 'b', provider: 'claude', long_used: 0.5, long_reset: 99 }])
     );
     expect(idle.get('b')![0]).toMatchObject({ long_used: 0, long_reset: 0 });
+  });
+
+  test('an idle window starts on first use and the next one on the use after its reset', () => {
+    const idle: PoolAccount = {
+      name: 'a',
+      displayName: 'a',
+      remaining: 100,
+      resetAtMs: null,
+      periodHours: 5,
+      startsOnUse: true,
+    };
+    // Nothing for two hours, then 10 points an hour.
+    const start = now + 2 * HOUR;
+    const projection = projectPool([idle], (t) => (t < start ? 0 : 10), now, now + 14 * HOUR);
+    // The window starts with the first use (within a 10 min step) and resets 5h later,
+    // giving back the 50 points used; the next window starts right away as usage goes on.
+    expect(projection.resets).toHaveLength(2);
+    expect(projection.resets[0].t - start).toBeLessThanOrEqual(5 * HOUR + 10 * 60 * 1000);
+    expect(projection.resets[0].t - start).toBeGreaterThanOrEqual(5 * HOUR);
+    expect(projection.resets[0].gain).toBeGreaterThanOrEqual(50);
+    expect(projection.resets[0].gain).toBeLessThan(52);
+    expect(projection.resets[1].t - projection.resets[0].t).toBeLessThanOrEqual(5 * HOUR + 10 * 60 * 1000);
+    expect(projection.poolEmptyAt).toBeNull();
+    // Without usage an idle window never resets.
+    expect(projectPool([idle], 0, now, now + 14 * HOUR).resets).toHaveLength(0);
   });
 
   test('burn counts a new 5h window from zero', () => {

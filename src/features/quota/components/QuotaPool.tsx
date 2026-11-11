@@ -52,10 +52,8 @@ const POOL_PROVIDERS = [
   // the same slot may be the weekly one.
   { type: 'codex', label: 'Codex', windowIds: ['five-hour', 'weekly', 'monthly'], shortWindowIds: [] },
 ] as const;
-/** The 5h pool: burn over the last hour, a couple of windows back and one window ahead. */
+/** The 5h pool reacts to the last hour's burn. */
 const SHORT_BURN_HOURS = 1;
-const SHORT_BACK_MS = 10 * HOUR_MS;
-const SHORT_AHEAD_MS = SHORT_PERIOD_HOURS * HOUR_MS;
 const BURN_WINDOWS = [1, 3, 6] as const;
 /** The proxy keeps 90 days (quotaHistoryRetention); the usage rhythm is learned from all of it. */
 const HISTORY_DAYS = 90;
@@ -139,6 +137,7 @@ function liveAccount(
           : window.resetAtMs
         : null,
     periodHours,
+    ...(short ? { startsOnUse: true } : {}),
   };
 }
 
@@ -457,6 +456,9 @@ function PoolCard({
           shortHistory={shortHistory}
           profile={profile}
           now={now}
+          scale={scale}
+          startMs={startMs}
+          endMs={endMs}
         />
       )}
     </article>
@@ -470,18 +472,30 @@ interface ShortPoolProps {
   shortHistory: Map<string, PoolHistoryPoint[]>;
   profile: UsageProfile | null;
   now: number;
+  scale: PoolScale;
+  startMs: number;
+  endMs: number;
 }
 
 /**
- * The pooled 5h window under the weekly chart: a fixed range of two windows back and one
- * ahead. The projection starts at the last hour's burn and then follows the learned rhythm.
+ * The pooled 5h window under the weekly chart, over the same range. The projection starts
+ * at the last hour's burn and then follows the learned rhythm.
  */
-function ShortPool({ accounts, longAccounts, history, shortHistory, profile, now }: ShortPoolProps) {
+function ShortPool({
+  accounts,
+  longAccounts,
+  history,
+  shortHistory,
+  profile,
+  now,
+  scale,
+  startMs,
+  endMs,
+}: ShortPoolProps) {
   const capacity = accounts.length * 100;
   const remaining = accounts.reduce((sum, account) => sum + account.remaining, 0);
-  const startMs = now - SHORT_BACK_MS;
-  const endMs = now + SHORT_AHEAD_MS;
-  const scale = useMemo(() => viewScale(SHORT_BACK_MS + SHORT_AHEAD_MS), []);
+  // At least one window ahead for the stats, even when the chart shows no projection.
+  const projectionEnd = Math.max(endMs, now + SHORT_PERIOD_HOURS * HOUR_MS);
   const burn = useMemo(
     () => burnRatePerHour(accounts, shortHistory, SHORT_BURN_HOURS, now, true),
     [accounts, shortHistory, now]
@@ -492,8 +506,8 @@ function ShortPool({ accounts, longAccounts, history, shortHistory, profile, now
   );
   const learned = profile !== null && pointsPerWeeklyPoint !== null;
   const recorded = useMemo(
-    () => recordedSeries(accounts, shortHistory, startMs, now),
-    [accounts, shortHistory, startMs, now]
+    () => recordedSeries(accounts, shortHistory, startMs, Math.min(now, endMs)),
+    [accounts, shortHistory, startMs, endMs, now]
   );
   const projection = useMemo(
     () =>
@@ -501,9 +515,9 @@ function ShortPool({ accounts, longAccounts, history, shortHistory, profile, now
         accounts,
         reactiveRate(profile, pointsPerWeeklyPoint, burn, SHORT_BURN_HOURS, now),
         now,
-        endMs
+        projectionEnd
       ),
-    [accounts, profile, pointsPerWeeklyPoint, burn, now, endMs]
+    [accounts, profile, pointsPerWeeklyPoint, burn, now, projectionEnd]
   );
   const lowest = projection.series.reduce((min, point) => Math.min(min, point.v), remaining);
   const nextReset = projection.resets[0] ?? null;
@@ -511,12 +525,14 @@ function ShortPool({ accounts, longAccounts, history, shortHistory, profile, now
   const stats = [
     {
       label: 'Pool empty',
-      value: projection.poolEmptyAt ? formatInstant(projection.poolEmptyAt) : 'Not in the next 5h',
+      value: projection.poolEmptyAt
+        ? formatInstant(projection.poolEmptyAt)
+        : `Not by ${formatInstant(projectionEnd)}`,
     },
     { label: 'Lowest point', value: `${formatPercent(lowest)} left` },
     {
       label: 'Next reset',
-      value: nextReset ? `+${formatPercent(nextReset.gain)} ${formatHour(nextReset.t)}` : 'None',
+      value: nextReset ? `+${formatPercent(nextReset.gain)} ${formatInstant(nextReset.t)}` : 'None',
     },
     { label: `Burn, last ${SHORT_BURN_HOURS}h`, value: `${burn.toFixed(1)}%/h` },
   ];
@@ -555,7 +571,7 @@ function ShortPool({ accounts, longAccounts, history, shortHistory, profile, now
       </div>
       <p className={styles.note}>
         {learned
-          ? 'The 5-hour projection starts at the last hour\u2019s burn, which fades over a few hours, and then follows the learned usage rhythm. An idle window is full and only starts again on first use.'
+          ? 'The 5-hour projection starts at the last hour\u2019s burn, which fades over a few hours, and then follows the learned usage rhythm. An idle window is full and only starts again on first use, so far-ahead resets are estimates.'
           : 'The 5-hour projection holds the last hour\u2019s burn constant until there is enough history to learn the usage rhythm.'}
       </p>
     </section>
