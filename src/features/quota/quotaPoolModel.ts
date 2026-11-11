@@ -32,6 +32,11 @@ export interface PoolAccount {
   /** Next long-window reset, or null when unknown. */
   resetAtMs: number | null;
   periodHours: number;
+  /**
+   * 5h windows: a window only starts when the credential is used, so a null reset means
+   * idle and the reset comes one period after the next use.
+   */
+  startsOnUse?: boolean;
 }
 
 export interface PoolSeriesPoint {
@@ -215,6 +220,7 @@ export function projectPool(
     remaining: account.remaining,
     nextReset: account.resetAtMs ?? Number.POSITIVE_INFINITY,
     periodMs: account.periodHours * HOUR_MS,
+    startsOnUse: account.startsOnUse === true,
   }));
   const total = () => state.reduce((sum, account) => sum + account.remaining, 0);
   const series: PoolSeriesPoint[] = [{ t: now, v: total() }];
@@ -239,7 +245,9 @@ export function projectPool(
       const before = total();
       due.remaining = 100;
       due.nextReset =
-        Number.isFinite(due.periodMs) && due.periodMs > 0 ? at + due.periodMs : Infinity;
+        !due.startsOnUse && Number.isFinite(due.periodMs) && due.periodMs > 0
+          ? at + due.periodMs
+          : Infinity;
       const after = total();
       series.push({ t: at, v: before });
       series.push({ t: at, v: after });
@@ -259,7 +267,13 @@ export function projectPool(
 
 /** Spend `amount` soonest-reset first. Returns the name of a credential this emptied. */
 function drain(
-  state: { name: string; remaining: number; nextReset: number }[],
+  state: {
+    name: string;
+    remaining: number;
+    nextReset: number;
+    periodMs: number;
+    startsOnUse: boolean;
+  }[],
   amount: number,
   at: number
 ): string | null {
@@ -271,6 +285,10 @@ function drain(
   for (const account of order) {
     if (left <= 0) break;
     const take = Math.min(account.remaining, left);
+    // First use of an idle window starts it.
+    if (take > 0 && account.startsOnUse && account.nextReset === Infinity) {
+      account.nextReset = at + account.periodMs;
+    }
     account.remaining -= take;
     left -= take;
     if (account.remaining <= 1e-9 && account.nextReset > at) {
@@ -536,6 +554,7 @@ export function shortAccountFromHistory(
     remaining: running ? clamp(100 - latest.long_used * 100) : 100,
     resetAtMs: running ? latest.long_reset * 1000 : null,
     periodHours: SHORT_PERIOD_HOURS,
+    startsOnUse: true,
   };
 }
 
