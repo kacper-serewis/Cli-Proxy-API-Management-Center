@@ -24,7 +24,12 @@ import {
   POOL_VIEWS,
   projectedRate,
   projectPool,
+  reactiveRate,
   recordedSeries,
+  SHORT_PERIOD_HOURS,
+  shortAccountFromHistory,
+  shortPerLongPoint,
+  shortWindowHistory,
   viewScale,
   viewTicks,
   WEEK_HOURS,
@@ -35,16 +40,22 @@ import type {
   PoolResetMark,
   PoolScale,
   PoolSeriesPoint,
+  UsageProfile,
 } from '../quotaPoolModel';
 import type { QuotaFileEntry } from '../logic';
 import type { QuotaCardState } from '../providers';
 import styles from './QuotaPool.module.scss';
 
 const POOL_PROVIDERS = [
-  { type: 'claude', label: 'Claude', windowIds: ['seven-day'] },
-  // Which slot carries the weekly limit depends on the plan; take the longest.
-  { type: 'codex', label: 'Codex', windowIds: ['five-hour', 'weekly', 'monthly'] },
+  { type: 'claude', label: 'Claude', windowIds: ['seven-day'], shortWindowIds: ['five-hour'] },
+  // Which slot carries the weekly limit depends on the plan; take the longest. No 5h pool:
+  // the same slot may be the weekly one.
+  { type: 'codex', label: 'Codex', windowIds: ['five-hour', 'weekly', 'monthly'], shortWindowIds: [] },
 ] as const;
+/** The 5h pool: burn over the last hour, a couple of windows back and one window ahead. */
+const SHORT_BURN_HOURS = 1;
+const SHORT_BACK_MS = 10 * HOUR_MS;
+const SHORT_AHEAD_MS = SHORT_PERIOD_HOURS * HOUR_MS;
 const BURN_WINDOWS = [1, 3, 6] as const;
 /** The proxy keeps 90 days (quotaHistoryRetention); the usage rhythm is learned from all of it. */
 const HISTORY_DAYS = 90;
@@ -96,7 +107,9 @@ function liveAccount(
   quota: QuotaCardState | undefined,
   windowIds: readonly string[],
   displayName: string,
-  now: number
+  now: number,
+  /** The 5h window: an expired one is idle, its successor only starts on first use. */
+  short = false
 ): PoolAccount | null {
   if (!quota || (quota as { status?: string }).status !== 'success') return null;
   const window = ((quota as { windows?: WindowLike[] }).windows ?? [])
@@ -107,7 +120,11 @@ function liveAccount(
     .sort((a, b) => (b.periodHours ?? 0) - (a.periodHours ?? 0))[0];
   if (!window || typeof window.usedPercent !== 'number') return null;
   const periodHours =
-    window.periodHours && window.periodHours > 0 ? window.periodHours : WEEK_HOURS;
+    window.periodHours && window.periodHours > 0
+      ? window.periodHours
+      : short
+        ? SHORT_PERIOD_HOURS
+        : WEEK_HOURS;
   const rolledOver = typeof window.resetAtMs === 'number' && window.resetAtMs <= now;
   return {
     name: entry.file.name,
@@ -116,7 +133,9 @@ function liveAccount(
     resetAtMs:
       typeof window.resetAtMs === 'number'
         ? rolledOver
-          ? window.resetAtMs + periodHours * HOUR_MS
+          ? short
+            ? null
+            : window.resetAtMs + periodHours * HOUR_MS
           : window.resetAtMs
         : null,
     periodHours,
@@ -162,6 +181,7 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
   }, [loadHistory]);
 
   const history = useMemo(() => historyByAccount(points), [points]);
+  const shortHistory = useMemo(() => shortWindowHistory(history), [history]);
 
   // Now sits where the recorded span ends and the projected one begins.
   const startMs = now - view.spanMs;
@@ -191,9 +211,33 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
             );
           })
           .filter((account): account is PoolAccount => account !== null);
-        return { ...provider, total: providerEntries.length, accounts };
+        const shortAccounts =
+          provider.shortWindowIds.length === 0
+            ? []
+            : providerEntries
+                .map((entry) => {
+                  const displayName = displayNameFor(entry.file.name);
+                  return (
+                    liveAccount(
+                      entry,
+                      quotaFor(entry),
+                      provider.shortWindowIds,
+                      displayName,
+                      now,
+                      true
+                    ) ??
+                    shortAccountFromHistory(
+                      entry.file.name,
+                      displayName,
+                      shortHistory.get(entry.file.name),
+                      now
+                    )
+                  );
+                })
+                .filter((account): account is PoolAccount => account !== null);
+        return { ...provider, total: providerEntries.length, accounts, shortAccounts };
       }).filter((pool) => pool.total > 0),
-    [entries, quotaFor, displayNameFor, history, now]
+    [entries, quotaFor, displayNameFor, history, shortHistory, now]
   );
 
   if (pools.length === 0) return null;
@@ -257,6 +301,8 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
           }
           totalAccounts={pool.total}
           accounts={pool.accounts}
+          shortAccounts={pool.shortAccounts}
+          shortHistory={shortHistory}
           history={history}
           shapeHistory={providerHistory.get(pool.type) ?? NO_HISTORY}
           burnWindow={burnWindow}
@@ -275,6 +321,9 @@ interface PoolCardProps {
   color: string | undefined;
   totalAccounts: number;
   accounts: PoolAccount[];
+  /** The same credentials' 5h windows; empty when the provider has no 5h pool. */
+  shortAccounts: PoolAccount[];
+  shortHistory: Map<string, PoolHistoryPoint[]>;
   history: Map<string, PoolHistoryPoint[]>;
   /** Every credential of this provider with history, in or out of the pool. */
   shapeHistory: PoolHistoryPoint[][];
@@ -290,6 +339,8 @@ function PoolCard({
   color,
   totalAccounts,
   accounts,
+  shortAccounts,
+  shortHistory,
   history,
   shapeHistory,
   burnWindow,
@@ -397,7 +448,117 @@ function PoolCard({
         <span className={styles.legendRecorded}>Recorded</span>
         <span className={styles.legendProjected}>Projected</span>
       </footer>
+
+      {shortAccounts.length > 0 && (
+        <ShortPool
+          accounts={shortAccounts}
+          longAccounts={accounts}
+          history={history}
+          shortHistory={shortHistory}
+          profile={profile}
+          now={now}
+        />
+      )}
     </article>
+  );
+}
+
+interface ShortPoolProps {
+  accounts: PoolAccount[];
+  longAccounts: PoolAccount[];
+  history: Map<string, PoolHistoryPoint[]>;
+  shortHistory: Map<string, PoolHistoryPoint[]>;
+  profile: UsageProfile | null;
+  now: number;
+}
+
+/**
+ * The pooled 5h window under the weekly chart: a fixed range of two windows back and one
+ * ahead. The projection starts at the last hour's burn and then follows the learned rhythm.
+ */
+function ShortPool({ accounts, longAccounts, history, shortHistory, profile, now }: ShortPoolProps) {
+  const capacity = accounts.length * 100;
+  const remaining = accounts.reduce((sum, account) => sum + account.remaining, 0);
+  const startMs = now - SHORT_BACK_MS;
+  const endMs = now + SHORT_AHEAD_MS;
+  const scale = useMemo(() => viewScale(SHORT_BACK_MS + SHORT_AHEAD_MS), []);
+  const burn = useMemo(
+    () => burnRatePerHour(accounts, shortHistory, SHORT_BURN_HOURS, now, true),
+    [accounts, shortHistory, now]
+  );
+  const pointsPerWeeklyPoint = useMemo(
+    () => shortPerLongPoint(longAccounts, history, shortHistory, now),
+    [longAccounts, history, shortHistory, now]
+  );
+  const learned = profile !== null && pointsPerWeeklyPoint !== null;
+  const recorded = useMemo(
+    () => recordedSeries(accounts, shortHistory, startMs, now),
+    [accounts, shortHistory, startMs, now]
+  );
+  const projection = useMemo(
+    () =>
+      projectPool(
+        accounts,
+        reactiveRate(profile, pointsPerWeeklyPoint, burn, SHORT_BURN_HOURS, now),
+        now,
+        endMs
+      ),
+    [accounts, profile, pointsPerWeeklyPoint, burn, now, endMs]
+  );
+  const lowest = projection.series.reduce((min, point) => Math.min(min, point.v), remaining);
+  const nextReset = projection.resets[0] ?? null;
+
+  const stats = [
+    {
+      label: 'Pool empty',
+      value: projection.poolEmptyAt ? formatInstant(projection.poolEmptyAt) : 'Not in the next 5h',
+    },
+    { label: 'Lowest point', value: `${formatPercent(lowest)} left` },
+    {
+      label: 'Next reset',
+      value: nextReset ? `+${formatPercent(nextReset.gain)} ${formatHour(nextReset.t)}` : 'None',
+    },
+    { label: `Burn, last ${SHORT_BURN_HOURS}h`, value: `${burn.toFixed(1)}%/h` },
+  ];
+
+  return (
+    <section className={styles.short}>
+      <header className={styles.cardHead}>
+        <div>
+          <div className={styles.shortTitle}>5-hour window</div>
+          <div className={styles.medium}>
+            {formatPercent(remaining)}
+            <span className={styles.subtle}> of {formatPercent(capacity)}</span>
+          </div>
+        </div>
+        <dl className={styles.stats}>
+          {stats.map((stat) => (
+            <div key={stat.label}>
+              <dt>{stat.label}</dt>
+              <dd>{stat.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </header>
+      <div className={styles.shortChart}>
+        <PoolChart
+          capacity={capacity}
+          recorded={recorded.series}
+          projected={projection.series}
+          resets={[...recorded.resets, ...projection.resets]}
+          poolEmptyAt={projection.poolEmptyAt}
+          now={now}
+          scale={scale}
+          startMs={startMs}
+          endMs={endMs}
+        />
+      </div>
+      <p className={styles.note}>
+        {learned
+          ? 'The 5-hour projection starts at the last hour\u2019s burn, which fades over a few hours, and then follows the learned usage rhythm. An idle window is full and only starts again on first use.'
+          : 'The 5-hour projection holds the last hour\u2019s burn constant until there is enough history to learn the usage rhythm.'}
+      </p>
+    </section>
   );
 }
 

@@ -307,3 +307,34 @@
 .legendProjected::before {
   border-top-style: dashed;
 }
+
+// The 5h pool sits under the weekly chart in the same card, a size smaller.
+.short {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+  padding-top: $spacing-lg;
+  border-top: 1px solid var(--border-color);
+}
+
+.shortTitle {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.medium {
+  margin-top: 2px;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.shortChart {
+  .yAxis,
+  .plot {
+    height: 150px;
+  }
+}
