@@ -46,8 +46,8 @@ const POOL_PROVIDERS = [
   { type: 'codex', label: 'Codex', windowIds: ['five-hour', 'weekly', 'monthly'] },
 ] as const;
 const BURN_WINDOWS = [1, 3, 6] as const;
-/** The proxy keeps 30 days (quotaHistoryRetention); fetch all of it for the 30d view. */
-const HISTORY_DAYS = 30;
+/** The proxy keeps 90 days (quotaHistoryRetention); the usage rhythm is learned from all of it. */
+const HISTORY_DAYS = 90;
 const HISTORY_REFRESH_MS = 2 * 60 * 1000;
 const DEFAULT_VIEW = '7d';
 const DEFAULT_AHEAD = '7d';
