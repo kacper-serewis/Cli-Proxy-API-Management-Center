@@ -4,11 +4,12 @@ import {
   burnRatePerHour,
   historyByAccount,
   mergeResetLabels,
-  POOL_VIEWS,
+  learnUsageProfile,
+  profileRate,
+  projectedRate,
   projectPool,
   recordedSeries,
-  viewStart,
-  viewStepMs,
+  viewScale,
   viewTicks,
 } from '../src/features/quota/quotaPoolModel';
 import type { PoolAccount, PoolHistoryPoint } from '../src/features/quota/quotaPoolModel';
@@ -138,32 +139,125 @@ describe('mergeResetLabels', () => {
 });
 
 describe('views', () => {
-  const byId = (id: string) => POOL_VIEWS.find((view) => view.id === id)!;
+  const DAY = 24 * HOUR;
 
-  test('every view ends at now at offset 0 (N days to date)', () => {
-    for (const view of POOL_VIEWS) {
-      const start = viewStart(view, now, 0);
-      expect(start).toBe(now - view.spanMs);
-      expect(start + view.spanMs).toBe(now);
-    }
-  });
-
-  test('day views step in whole days and grid on local midnight', () => {
-    const view = byId('7d');
-    expect(viewStepMs(view)).toBe(3 * 24 * HOUR);
-    const start = viewStart(view, now, -1);
-    expect(start).toBe(now - view.spanMs - 3 * 24 * HOUR);
-    const ticks = viewTicks(view, start, start + view.spanMs);
-    expect(ticks).toHaveLength(7);
+  test('day scales grid on local midnight', () => {
+    const scale = viewScale(14 * DAY);
+    const ticks = viewTicks(scale, now - 7 * DAY, now + 7 * DAY);
+    expect(ticks).toHaveLength(14);
     expect(ticks.every((tick) => new Date(tick).getHours() === 0)).toBe(true);
   });
 
-  test('hour views grid on whole tick hours', () => {
-    const view = byId('1d');
-    const start = viewStart(view, now, 0);
-    const ticks = viewTicks(view, start, start + view.spanMs);
+  test('hour scales grid on whole tick hours', () => {
+    const scale = viewScale(DAY);
+    const ticks = viewTicks(scale, now - DAY, now);
     expect(ticks).toHaveLength(8);
     expect(ticks.every((tick) => new Date(tick).getHours() % 3 === 0)).toBe(true);
     expect(ticks.every((tick) => new Date(tick).getMinutes() === 0)).toBe(true);
+  });
+
+  test('wide charts label fewer days', () => {
+    expect(viewScale(14 * DAY).labelEvery).toBe(1);
+    expect(viewScale(44 * DAY).labelEvery).toBeGreaterThan(3);
+  });
+});
+
+describe('usage profile', () => {
+  const DAY = 24 * HOUR;
+  const reset = now + 30 * DAY;
+  // Local-time fixtures, so the test holds in any timezone. 2026-11-11 is a Wednesday.
+  const at = (day: number, hour: number, minute = 0) =>
+    new Date(2026, 10, day, hour, minute).getTime();
+  const learnedAt = at(11, 22);
+  /** One point of usage per hour from 9:00 to 17:00 on weekdays, 10:00 to 12:00 on weekends. */
+  const rhythm = (auth: string, fromDay: number, toDay: number): PoolHistoryPoint[] => {
+    const points: PoolHistoryPoint[] = [];
+    let used = 0;
+    const add = (ms: number) =>
+      points.push({
+        t: sec(ms),
+        auth,
+        provider: 'claude',
+        long_used: used / 100,
+        long_reset: sec(reset),
+      });
+    add(at(fromDay, 0));
+    for (let day = fromDay; day <= toDay; day++) {
+      const weekend = [0, 6].includes(new Date(2026, 10, day).getDay());
+      for (let hour = weekend ? 10 : 9; hour < (weekend ? 12 : 17); hour++) {
+        used += 1;
+        add(at(day, hour, 30));
+      }
+    }
+    return points;
+  };
+  const pool = [{ ...account('a', 50, 100), resetAtMs: reset }];
+
+  test('learns quiet nights and lighter weekends', () => {
+    const points = rhythm('a', 2, 11);
+    const profile = learnUsageProfile([points], pool, historyByAccount(points), learnedAt)!;
+    expect(profile.weekday[3]).toBe(0);
+    expect(profile.weekday[13]).toBeCloseTo(1, 1);
+    expect(profile.weekend[3]).toBe(0);
+    expect(profile.weekend[11]).toBeLessThan(profile.weekday[11]);
+    const perDay = (rates: number[]) => rates.reduce((sum, rate) => sum + rate, 0);
+    expect(perDay(profile.weekend)).toBeLessThan(perDay(profile.weekday) / 2);
+    expect(profile.perWeek).toBeCloseTo(5 * 8 + 2 * 2, 0);
+    expect(profileRate(profile, at(14, 11))).toBe(profile.weekend[11]);
+  });
+
+  test('ignores one-point jitter in the readings', () => {
+    const base = rhythm('a', 2, 11);
+    const jitter = base.flatMap((point) => [
+      point,
+      { ...point, t: point.t + 120, long_used: point.long_used - 0.01 },
+      { ...point, t: point.t + 240 },
+    ]);
+    const steady = learnUsageProfile([base], pool, historyByAccount(base), learnedAt)!;
+    const noisy = learnUsageProfile([jitter], pool, historyByAccount(jitter), learnedAt)!;
+    expect(noisy.perWeek).toBeCloseTo(steady.perWeek, 5);
+  });
+
+  test('takes the shape from every credential and the level from the pool', () => {
+    // 'old' left the pool; 'a' joined four days ago and burns twice as fast.
+    const old = rhythm('old', 1, 7);
+    const mine = rhythm('a', 8, 11).map((point) => ({ ...point, long_used: point.long_used * 2 }));
+    const history = historyByAccount([...old, ...mine]);
+    const profile = learnUsageProfile([old, mine], pool, history, learnedAt)!;
+    expect(profile.weekday[3]).toBe(0);
+    expect(profile.weekday[13]).toBeCloseTo(2, 0);
+  });
+
+  test('needs two days of history', () => {
+    const points = rhythm('a', 11, 11);
+    expect(learnUsageProfile([points], pool, historyByAccount(points), learnedAt)).toBeNull();
+    expect(learnUsageProfile([], pool, new Map(), learnedAt)).toBeNull();
+  });
+
+  test('projection is flat overnight and the recent pace fades', () => {
+    const points = rhythm('a', 2, 11);
+    const profile = learnUsageProfile([points], pool, historyByAccount(points), learnedAt)!;
+    // Burning 4 points/h at 22:00, when the profile expects nothing: a short session.
+    const late = projectedRate(profile, 4, 1, learnedAt);
+    expect(late(learnedAt)).toBeCloseTo(4, 5);
+    expect(late(learnedAt + HOUR)).toBeCloseTo(2, 5);
+    expect(late(at(12, 3))).toBeLessThan(0.2);
+    expect(late(at(13, 13))).toBeCloseTo(1, 1);
+    // Twice the usual pace at 13:00 scales the rhythm, so the night after stays flat.
+    const busy = projectedRate(profile, 2, 1, at(11, 13));
+    expect(busy(at(11, 13))).toBeCloseTo(2, 1);
+    expect(busy(at(11, 16))).toBeCloseTo(1.5 * profile.weekday[16], 5);
+    expect(busy(at(12, 3))).toBe(0);
+
+    const projection = projectPool(pool, projectedRate(profile, 0, 1, learnedAt), learnedAt, at(13, 0));
+    const value = (ms: number) => projection.series.filter((p) => p.t <= ms).at(-1)!.v;
+    // Nothing overnight, then Thursday's eight working hours.
+    expect(value(at(12, 7))).toBeCloseTo(50, 5);
+    expect(value(at(12, 23))).toBeCloseTo(42, 0);
+  });
+
+  test('without a profile the recent rate stays constant', () => {
+    const rate = projectedRate(null, 3, 1, now);
+    expect(rate(now + 50 * HOUR)).toBe(3);
   });
 });

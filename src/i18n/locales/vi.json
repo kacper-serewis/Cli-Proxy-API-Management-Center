@@ -2525,6 +2525,7 @@
     },
     "sticky": "Chat giữ tài khoản để tái dùng bộ nhớ đệm. Chỉ chuyển chat hiện tại khi dự trữ bị đe dọa và có lựa chọn an toàn.",
     "refresh_failed": "Không làm mới được định tuyến. Đang hiển thị quyết định gần nhất.",
-    "pool_scenario": "Dự báo nét đứt giả định tốc độ không đổi và dùng hạn mức đặt lại sớm nhất trước. Nó không mô phỏng dự trữ thích ứng hay gắn chat; xem các tài khoản ở trên để biết quyết định thực tế."
+    "pool_scenario": "Dự báo nét đứt giả định tốc độ không đổi và dùng hạn mức đặt lại sớm nhất trước. Nó không mô phỏng dự trữ thích ứng hay gắn chat; xem các tài khoản ở trên để biết quyết định thực tế.",
+    "pool_scenario_learned": "Dự báo nét đứt đi theo nhịp sử dụng học được từ lịch sử đã ghi (giờ trong ngày, ngày thường hay cuối tuần), bắt đầu từ tốc độ gần đây và dùng hạn mức đặt lại sớm nhất trước. Nó không mô phỏng dự trữ thích ứng hay gắn chat; xem các tài khoản ở trên để biết quyết định thực tế."
   }
 }

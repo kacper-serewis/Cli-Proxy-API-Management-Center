@@ -23,8 +23,7 @@
   color: var(--warning-color, #d97706);
 }
 
-.segmented,
-.nav {
+.segmented {
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -67,12 +66,8 @@
   }
 }
 
-.nav {
-  margin-left: auto;
-}
-
 .range {
-  margin-right: $spacing-xs;
+  margin-left: auto;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }

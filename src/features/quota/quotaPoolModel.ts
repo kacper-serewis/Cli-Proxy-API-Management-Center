@@ -4,8 +4,9 @@
  * Per-credential cards answer "how much is left on this account"; the pool answers
  * "how much is left across all of them, and when does it run out". Recorded values come
  * from the proxy's quota history (GET /observability/quota-history); the projection
- * spends the recent burn rate the way the soonest-reset router does — always from the
- * credential whose window resets first — and refills each credential at its reset.
+ * follows the usage rhythm learned from that history (quiet nights, lighter weekends),
+ * nudged by the recent burn rate, and spends it the way the soonest-reset router does —
+ * always from the credential whose window resets first — refilling each at its reset.
  *
  * Pure functions only: `now` is always passed in.
  */
@@ -189,16 +190,23 @@ export function burnRatePerHour(
 }
 
 /**
- * Project the pool forward to `endMs` at a constant burn rate. Usage is drawn from the
- * credential that resets soonest and still has quota, which is how soonest-reset routing
- * spends it; each credential refills to 100% at its reset and its next window starts.
+ * Project the pool forward to `endMs`. `burn` is points per hour, either constant or a
+ * function of time (see `projectedRate`). Usage is drawn from the credential that resets
+ * soonest and still has quota, which is how soonest-reset routing spends it; each
+ * credential refills to 100% at its reset and its next window starts.
  */
 export function projectPool(
   accounts: PoolAccount[],
-  burnPerHour: number,
+  burn: number | ((t: number) => number),
   now: number,
   endMs: number
 ): PoolProjection {
+  // Points burned between two instants at most one step apart: the rate at the midpoint.
+  const burned = (from: number, to: number) =>
+    to <= from
+      ? 0
+      : Math.max(0, typeof burn === 'number' ? burn : burn((from + to) / 2)) *
+        ((to - from) / HOUR_MS);
   const state = accounts.map((account) => ({
     name: account.displayName,
     remaining: account.remaining,
@@ -222,7 +230,7 @@ export function projectPool(
         .sort((a, b) => a.nextReset - b.nextReset)[0];
       if (!due) break;
       const at = due.nextReset;
-      const emptiedBefore = drain(state, burnPerHour * ((at - t) / HOUR_MS), at);
+      const emptiedBefore = drain(state, burned(t, at), at);
       if (!firstEmpty && emptiedBefore) firstEmpty = { name: emptiedBefore, t: at };
       t = at;
       const before = total();
@@ -236,7 +244,7 @@ export function projectPool(
         resets.push({ t: at, gain: after - before, v: after });
     }
 
-    const emptied = drain(state, burnPerHour * ((next - t) / HOUR_MS), next);
+    const emptied = drain(state, burned(t, next), next);
     if (!firstEmpty && emptied) firstEmpty = { name: emptied, t: next };
     t = next;
     const value = total();
@@ -295,55 +303,249 @@ export function mergeResetLabels(
   return merged;
 }
 
-export interface PoolView {
+/**
+ * The usage rhythm learned from history: expected pool burn in points per hour for each
+ * local hour of a weekday and of a weekend day.
+ */
+export interface UsageProfile {
+  weekday: number[];
+  weekend: number[];
+  /** Points a typical week burns. */
+  perWeek: number;
+  /** Hours of history the rhythm was learned from. */
+  observedHours: number;
+}
+
+/** Below this much history the rhythm is noise; the projection stays at the recent pace. */
+const MIN_PROFILE_HOURS = 48;
+/** The level follows how the pool has been used lately, not how it was used a month ago. */
+const LEVEL_WINDOW_MS = 14 * DAY_MS;
+/** How fast "busier (or quieter) than usual right now" fades back to the learned rhythm. */
+const RECENT_HALF_LIFE_MS = 3 * HOUR_MS;
+/** The recent pace counts for at most this many times the usual pace. */
+const MAX_RECENT_FACTOR = 4;
+/** How long burn at a normally idle hour is assumed to carry on. */
+const SESSION_HALF_LIFE_MS = HOUR_MS;
+
+const isWeekend = (d: Date) => d.getDay() === 0 || d.getDay() === 6;
+/** Slot 0..23 is a weekday hour, 24..47 a weekend hour, in local time. */
+const slotOf = (ms: number) => {
+  const d = new Date(ms);
+  return (isWeekend(d) ? 24 : 0) + d.getHours();
+};
+
+/**
+ * Points one credential used, as [time, points] at the observation that revealed them.
+ * Readings jitter by a point, so only a new high within a reset window counts.
+ */
+function usageEvents(points: PoolHistoryPoint[]): [number, number][] {
+  const events: [number, number][] = [];
+  let reset: number | null = null;
+  let high = 0;
+  for (const point of points) {
+    const used = point.long_used * 100;
+    if (reset !== point.long_reset) {
+      reset = point.long_reset;
+      high = used;
+      continue;
+    }
+    if (used > high) {
+      events.push([point.t * 1000, used - high]);
+      high = used;
+    }
+  }
+  return events;
+}
+
+/** Hours each slot was covered between two instants (partial hours count partially). */
+function slotExposure(fromMs: number, toMs: number): number[] {
+  const hours = new Array<number>(48).fill(0);
+  for (let t = fromMs; t < toMs; ) {
+    const next = new Date(t);
+    next.setMinutes(60, 0, 0);
+    const end = Math.min(next.getTime(), toMs);
+    hours[slotOf(t)] += (end - t) / HOUR_MS;
+    t = end;
+  }
+  return hours;
+}
+
+/**
+ * Learn when the pool gets used. The shape (which hours and day types are busy) comes
+ * from every credential of the provider in `shapeHistory`, including ones no longer in
+ * the pool, because a pool that changed last week has too little history of its own.
+ * The level comes from the pool's current credentials only, over the time they all have
+ * history, so the profile is in the pool's own points per hour.
+ *
+ * Time with no samples (the proxy was off, the Mac asleep) counts as observed and idle:
+ * usage made elsewhere shows up on the next sample.
+ */
+export function learnUsageProfile(
+  shapeHistory: PoolHistoryPoint[][],
+  accounts: PoolAccount[],
+  history: Map<string, PoolHistoryPoint[]>,
+  now: number
+): UsageProfile | null {
+  const lists = shapeHistory.filter((points) => points.length > 0);
+  if (lists.length === 0) return null;
+  const firstMs = Math.min(...lists.map((points) => points[0].t * 1000));
+  const observedHours = (now - firstMs) / HOUR_MS;
+  if (observedHours < MIN_PROFILE_HOURS) return null;
+
+  const exposure = slotExposure(firstMs, now);
+  const used = new Array<number>(48).fill(0);
+  for (const points of lists) {
+    for (const [t, amount] of usageEvents(points)) if (t <= now) used[slotOf(t)] += amount;
+  }
+  // No weekend seen yet: assume it looks like a weekday until one has been recorded.
+  const weekendSeen = exposure.slice(24).reduce((sum, hours) => sum + hours, 0) >= 24;
+  // Smooth over neighbouring hours; a few weeks give each hour only a handful of samples.
+  const shape = (offset: number) =>
+    Array.from({ length: 24 }, (_, hour) => {
+      let points = 0;
+      let hours = 0;
+      for (const [shift, weight] of [
+        [-1, 1],
+        [0, 2],
+        [1, 1],
+      ]) {
+        const slot = offset + ((hour + shift + 24) % 24);
+        points += weight * used[slot];
+        hours += weight * exposure[slot];
+      }
+      return hours > 0 ? points / hours : 0;
+    });
+  const weekday = shape(0);
+  const weekend = weekendSeen ? shape(24) : weekday;
+  const shapeAt = (slot: number) => (slot < 24 ? weekday[slot] : weekend[slot - 24]);
+
+  // Scale the shape so it reproduces what the current credentials actually burned.
+  const tracked = accounts
+    .map((account) => history.get(account.name) ?? [])
+    .filter((points) => points.length > 0);
+  let scale = 1;
+  if (tracked.length > 0) {
+    const fromMs = Math.max(
+      now - LEVEL_WINDOW_MS,
+      ...tracked.map((points) => points[0].t * 1000)
+    );
+    if (now - fromMs >= 24 * HOUR_MS) {
+      const expected = slotExposure(fromMs, now).reduce(
+        (sum, hours, slot) => sum + hours * shapeAt(slot),
+        0
+      );
+      const actual = tracked
+        .flatMap((points) => usageEvents(points))
+        .reduce((sum, [t, amount]) => (t > fromMs && t <= now ? sum + amount : sum), 0);
+      if (expected > 0) scale = actual / expected;
+    }
+  }
+  const scaled = (rates: number[]) => rates.map((rate) => rate * scale);
+  const profile = { weekday: scaled(weekday), weekend: scaled(weekend) };
+  const perDay = (rates: number[]) => rates.reduce((sum, rate) => sum + rate, 0);
+  const perWeek = 5 * perDay(profile.weekday) + 2 * perDay(profile.weekend);
+  return perWeek > 0 ? { ...profile, perWeek, observedHours } : null;
+}
+
+/** The learned burn in points per hour at `t`. */
+export function profileRate(profile: UsageProfile, t: number): number {
+  const slot = slotOf(t);
+  return slot < 24 ? profile.weekday[slot] : profile.weekend[slot - 24];
+}
+
+/**
+ * Burn rate to project with: the learned rhythm, scaled by how much busier or quieter than
+ * usual the last `recentHours` were. That factor fades back to 1 over a few hours, and it
+ * multiplies the rhythm, so a busy evening does not turn into a busy night. Burn the
+ * rhythm cannot explain at all (working at an hour that is normally idle) carries on
+ * briefly on its own. Without a profile it is the constant recent rate.
+ */
+export function projectedRate(
+  profile: UsageProfile | null,
+  recentBurn: number,
+  recentHours: number,
+  now: number
+): (t: number) => number {
+  if (!profile) return () => recentBurn;
+  const samples = Math.max(1, Math.round(recentHours * 4));
+  let usual = 0;
+  for (let i = 0; i < samples; i++) {
+    usual += profileRate(profile, now - ((i + 0.5) / samples) * recentHours * HOUR_MS);
+  }
+  usual /= samples;
+  const factor = usual > 0 ? Math.min(MAX_RECENT_FACTOR, recentBurn / usual) : 1;
+  const unexplained = Math.max(0, recentBurn - factor * usual);
+  return (t) => {
+    const elapsed = Math.max(0, t - now);
+    return (
+      profileRate(profile, t) * (1 + (factor - 1) * 0.5 ** (elapsed / RECENT_HALF_LIFE_MS)) +
+      unexplained * 0.5 ** (elapsed / SESSION_HALF_LIFE_MS)
+    );
+  };
+}
+
+export interface PoolSpan {
   id: string;
   label: string;
-  /** The view ends at "now" and reaches this far back (N days to date). */
   spanMs: number;
-  /** Gridline spacing; also the label spacing unless `labelEvery` says otherwise. */
+}
+
+/** How much recorded history the chart shows before now. */
+export const POOL_VIEWS: PoolSpan[] = [
+  { id: '1d', label: '1d', spanMs: DAY_MS },
+  { id: '3d', label: '3d', spanMs: 3 * DAY_MS },
+  { id: '7d', label: '7d', spanMs: 7 * DAY_MS },
+  { id: '14d', label: '14d', spanMs: 14 * DAY_MS },
+  { id: '30d', label: '30d', spanMs: 30 * DAY_MS },
+];
+
+/** How much projection the chart shows after now. */
+export const POOL_AHEAD: PoolSpan[] = [
+  { id: '0', label: 'Off', spanMs: 0 },
+  { id: '1d', label: '1d', spanMs: DAY_MS },
+  { id: '3d', label: '3d', spanMs: 3 * DAY_MS },
+  { id: '7d', label: '7d', spanMs: 7 * DAY_MS },
+  { id: '14d', label: '14d', spanMs: 14 * DAY_MS },
+];
+
+export interface PoolScale {
+  /** Gridline spacing. */
   tickMs: number;
+  /** Every n-th gridline gets a label. */
   labelEvery: number;
 }
 
-export const POOL_VIEWS: PoolView[] = [
-  { id: '1d', label: '1d', spanMs: DAY_MS, tickMs: 3 * HOUR_MS, labelEvery: 1 },
-  { id: '3d', label: '3d', spanMs: 3 * DAY_MS, tickMs: 6 * HOUR_MS, labelEvery: 2 },
-  { id: '7d', label: '7d', spanMs: 7 * DAY_MS, tickMs: DAY_MS, labelEvery: 1 },
-  { id: '14d', label: '14d', spanMs: 14 * DAY_MS, tickMs: DAY_MS, labelEvery: 1 },
-  { id: '30d', label: '30d', spanMs: 30 * DAY_MS, tickMs: DAY_MS, labelEvery: 3 },
-];
+/** Gridlines that suit a chart `spanMs` wide. */
+export function viewScale(spanMs: number): PoolScale {
+  if (spanMs <= 1.5 * DAY_MS) return { tickMs: 3 * HOUR_MS, labelEvery: 1 };
+  if (spanMs <= 4 * DAY_MS) return { tickMs: 6 * HOUR_MS, labelEvery: 2 };
+  if (spanMs <= 15 * DAY_MS) return { tickMs: DAY_MS, labelEvery: 1 };
+  if (spanMs <= 22 * DAY_MS) return { tickMs: DAY_MS, labelEvery: 2 };
+  return { tickMs: DAY_MS, labelEvery: Math.ceil(spanMs / (10 * DAY_MS)) };
+}
 
 /** Snap `ms` down to a local tick boundary: midnight for day ticks, else whole tick hours. */
-function snapToTick(view: PoolView, ms: number): Date {
+function snapToTick(scale: PoolScale, ms: number): Date {
   const d = new Date(ms);
-  if (view.tickMs >= DAY_MS) {
+  if (scale.tickMs >= DAY_MS) {
     d.setHours(0, 0, 0, 0);
   } else {
-    const stepHours = view.tickMs / HOUR_MS;
+    const stepHours = scale.tickMs / HOUR_MS;
     d.setMinutes(0, 0, 0);
     d.setHours(Math.floor(d.getHours() / stepHours) * stepHours);
   }
   return d;
 }
 
-/** How far one press of ‹ or › moves: about half the span, in whole ticks. */
-export const viewStepMs = (view: PoolView) =>
-  Math.max(1, Math.floor(view.spanMs / 2 / view.tickMs)) * view.tickMs;
-
-/** Start of the view: `spanMs` before now, so offset 0 ends at now; moved by `offset` steps. */
-export function viewStart(view: PoolView, now: number, offset: number): number {
-  return now - view.spanMs + offset * viewStepMs(view);
-}
-
 /** Gridline instants in [startMs, endMs), aligned to local tick boundaries. */
-export function viewTicks(view: PoolView, startMs: number, endMs: number): number[] {
+export function viewTicks(scale: PoolScale, startMs: number, endMs: number): number[] {
   const ticks: number[] = [];
   // Step by calendar days/hours so DST shifts don't drift the gridlines off midnight.
-  for (let d = snapToTick(view, startMs); d.getTime() < endMs; ) {
+  for (let d = snapToTick(scale, startMs); d.getTime() < endMs; ) {
     if (d.getTime() >= startMs) ticks.push(d.getTime());
     d = new Date(d);
-    if (view.tickMs >= DAY_MS) d.setDate(d.getDate() + view.tickMs / DAY_MS);
-    else d.setHours(d.getHours() + view.tickMs / HOUR_MS);
+    if (scale.tickMs >= DAY_MS) d.setDate(d.getDate() + scale.tickMs / DAY_MS);
+    else d.setHours(d.getHours() + scale.tickMs / HOUR_MS);
   }
   return ticks;
 }

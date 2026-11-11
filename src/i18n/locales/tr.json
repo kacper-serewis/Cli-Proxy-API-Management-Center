@@ -2519,6 +2519,7 @@
     },
     "sticky": "Sohbetler önbellek yeniden kullanımı için sabit kalır. Sonraki sohbet sıralaması, mevcut bir sohbeti yalnızca rezervi tehlikeye girdiğinde ve güvenli bir alternatif varsa taşır.",
     "refresh_failed": "Yönlendirme yenilenemedi. Son başarılı kararlar gösteriliyor.",
-    "pool_scenario": "Kesikli havuz projeksiyonu, önce en yakın sıfırlanan kotayı harcayan sabit hızlı bir senaryodur. Uyarlanabilir rezervleri veya sohbet bağlılığını simüle etmez; gerçek yönlendirme kararları için yukarıdaki Hesaplar bölümüne bakın."
+    "pool_scenario": "Kesikli havuz projeksiyonu, önce en yakın sıfırlanan kotayı harcayan sabit hızlı bir senaryodur. Uyarlanabilir rezervleri veya sohbet bağlılığını simüle etmez; gerçek yönlendirme kararları için yukarıdaki Hesaplar bölümüne bakın.",
+    "pool_scenario_learned": "Kesikli havuz projeksiyonu, kayıtlı geçmişten öğrenilen kullanım ritmini (günün saati, hafta içi veya hafta sonu) izler, son hızdan başlar ve önce en yakın sıfırlanan kotayı harcar. Uyarlanabilir rezervleri veya sohbet bağlılığını simüle etmez; gerçek yönlendirme kararları için yukarıdaki Hesaplar bölümüne bakın."
   }
 }

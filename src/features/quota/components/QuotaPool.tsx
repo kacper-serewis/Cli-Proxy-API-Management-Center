@@ -1,6 +1,6 @@
 /**
- * Pooled quota chart per provider: recorded pool remaining, a projection at the recent
- * burn rate, and when the first credential and the whole pool run dry.
+ * Pooled quota chart per provider: recorded pool remaining, a projection that follows the
+ * learned usage rhythm, and when the first credential and the whole pool run dry.
  *
  * All maths lives in quotaPoolModel.ts — this file is data loading and layout.
  */
@@ -18,11 +18,14 @@ import {
   accountFromHistory,
   burnRatePerHour,
   historyByAccount,
+  learnUsageProfile,
   mergeResetLabels,
+  POOL_AHEAD,
   POOL_VIEWS,
+  projectedRate,
   projectPool,
   recordedSeries,
-  viewStart,
+  viewScale,
   viewTicks,
   WEEK_HOURS,
 } from '../quotaPoolModel';
@@ -30,8 +33,8 @@ import type {
   PoolAccount,
   PoolHistoryPoint,
   PoolResetMark,
+  PoolScale,
   PoolSeriesPoint,
-  PoolView,
 } from '../quotaPoolModel';
 import type { QuotaFileEntry } from '../logic';
 import type { QuotaCardState } from '../providers';
@@ -46,7 +49,10 @@ const BURN_WINDOWS = [1, 3, 6] as const;
 /** The proxy keeps 30 days (quotaHistoryRetention); fetch all of it for the 30d view. */
 const HISTORY_DAYS = 30;
 const HISTORY_REFRESH_MS = 2 * 60 * 1000;
-const DEFAULT_VIEW = '14d';
+const DEFAULT_VIEW = '7d';
+const DEFAULT_AHEAD = '7d';
+
+const NO_HISTORY: PoolHistoryPoint[][] = [];
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const formatAxisDay = (ms: number) => {
@@ -57,8 +63,8 @@ const formatShortDate = (ms: number) =>
   new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 const formatHour = (ms: number) =>
   new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-const formatRange = (view: PoolView, startMs: number, endMs: number) =>
-  view.tickMs >= DAY_MS
+const formatRange = (scale: PoolScale, startMs: number, endMs: number) =>
+  scale.tickMs >= DAY_MS
     ? `${formatShortDate(startMs)} to ${formatShortDate(endMs - 1)}`
     : `${formatShortDate(startMs)} ${formatHour(startMs)} to ${formatShortDate(endMs)} ${formatHour(endMs)}`;
 const formatInstant = (ms: number) =>
@@ -131,7 +137,10 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
   const view =
     POOL_VIEWS.find((candidate) => candidate.id === viewId) ??
     POOL_VIEWS.find((candidate) => candidate.id === DEFAULT_VIEW)!;
-  const [offset, setOffset] = useState(0);
+  const [aheadId, setAheadId] = useLocalStorage<string>('quota-pool-ahead', DEFAULT_AHEAD);
+  const ahead =
+    POOL_AHEAD.find((candidate) => candidate.id === aheadId) ??
+    POOL_AHEAD.find((candidate) => candidate.id === DEFAULT_AHEAD)!;
   const [points, setPoints] = useState<PoolHistoryPoint[]>([]);
   const [historyError, setHistoryError] = useState(false);
 
@@ -154,8 +163,18 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
 
   const history = useMemo(() => historyByAccount(points), [points]);
 
-  const startMs = useMemo(() => viewStart(view, now, offset), [view, now, offset]);
-  const endMs = startMs + view.spanMs;
+  // Now sits where the recorded span ends and the projected one begins.
+  const startMs = now - view.spanMs;
+  const endMs = now + ahead.spanMs;
+  const scale = useMemo(() => viewScale(view.spanMs + ahead.spanMs), [view, ahead]);
+  const providerHistory = useMemo(() => {
+    const byProvider = new Map<string, PoolHistoryPoint[][]>();
+    for (const list of history.values()) {
+      const provider = list[0].provider;
+      byProvider.set(provider, [...(byProvider.get(provider) ?? []), list]);
+    }
+    return byProvider;
+  }, [history]);
 
   const pools = useMemo(
     () =>
@@ -182,7 +201,7 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
   return (
     <section className={styles.pool}>
       <div className={styles.controls}>
-        <span className={styles.controlLabel}>Burn rate</span>
+        <span className={styles.controlLabel}>Recent pace</span>
         <div className={styles.segmented}>
           {BURN_WINDOWS.map((hours) => (
             <button
@@ -195,17 +214,27 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
             </button>
           ))}
         </div>
-        <span className={styles.controlLabel}>View</span>
+        <span className={styles.controlLabel}>Back</span>
         <div className={styles.segmented}>
           {POOL_VIEWS.map((option) => (
             <button
               key={option.id}
               type="button"
               aria-pressed={view.id === option.id}
-              onClick={() => {
-                setViewId(option.id);
-                setOffset(0);
-              }}
+              onClick={() => setViewId(option.id)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+        <span className={styles.controlLabel}>Ahead</span>
+        <div className={styles.segmented}>
+          {POOL_AHEAD.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              aria-pressed={ahead.id === option.id}
+              onClick={() => setAheadId(option.id)}
             >
               {option.label}
             </button>
@@ -216,20 +245,7 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
             Quota history unavailable; showing live values only
           </span>
         )}
-        <div className={styles.nav}>
-          <span className={styles.range}>
-            {formatRange(view, startMs, endMs)}
-          </span>
-          <button type="button" aria-label="Earlier" onClick={() => setOffset((v) => v - 1)}>
-            ‹
-          </button>
-          <button type="button" disabled={offset === 0} onClick={() => setOffset(0)}>
-            Today
-          </button>
-          <button type="button" aria-label="Later" onClick={() => setOffset((v) => v + 1)}>
-            ›
-          </button>
-        </div>
+        <span className={styles.range}>{formatRange(scale, startMs, endMs)}</span>
       </div>
 
       {pools.map((pool) => (
@@ -242,9 +258,10 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
           totalAccounts={pool.total}
           accounts={pool.accounts}
           history={history}
+          shapeHistory={providerHistory.get(pool.type) ?? NO_HISTORY}
           burnWindow={burnWindow}
           now={now}
-          view={view}
+          scale={scale}
           startMs={startMs}
           endMs={endMs}
         />
@@ -259,9 +276,11 @@ interface PoolCardProps {
   totalAccounts: number;
   accounts: PoolAccount[];
   history: Map<string, PoolHistoryPoint[]>;
+  /** Every credential of this provider with history, in or out of the pool. */
+  shapeHistory: PoolHistoryPoint[][];
   burnWindow: number;
   now: number;
-  view: PoolView;
+  scale: PoolScale;
   startMs: number;
   endMs: number;
 }
@@ -272,9 +291,10 @@ function PoolCard({
   totalAccounts,
   accounts,
   history,
+  shapeHistory,
   burnWindow,
   now,
-  view,
+  scale,
   startMs,
   endMs,
 }: PoolCardProps) {
@@ -291,9 +311,13 @@ function PoolCard({
   );
   // Project far enough to answer "when does the pool run out" even past the view.
   const projectionEnd = Math.max(endMs, now + 14 * DAY_MS);
+  const profile = useMemo(
+    () => learnUsageProfile(shapeHistory, accounts, history, now),
+    [shapeHistory, accounts, history, now]
+  );
   const projection = useMemo(
-    () => projectPool(accounts, burn, now, projectionEnd),
-    [accounts, burn, now, projectionEnd]
+    () => projectPool(accounts, projectedRate(profile, burn, burnWindow, now), now, projectionEnd),
+    [accounts, profile, burn, burnWindow, now, projectionEnd]
   );
   const nextReset = projection.resets[0] ?? null;
 
@@ -315,6 +339,10 @@ function PoolCard({
       value: nextReset ? `+${formatPercent(nextReset.gain)} ${formatInstant(nextReset.t)}` : 'None',
     },
     { label: `Burn, last ${burnWindow}h`, value: `${burn.toFixed(1)}%/h` },
+    {
+      label: 'Typical week',
+      value: profile ? `${formatPercent(profile.perWeek)} of ${formatPercent(capacity)}` : 'Learning',
+    },
   ];
 
   const missing = totalAccounts - accounts.length;
@@ -355,13 +383,15 @@ function PoolCard({
           resets={[...recorded.resets, ...projection.resets]}
           poolEmptyAt={projection.poolEmptyAt}
           now={now}
-          view={view}
+          scale={scale}
           startMs={startMs}
           endMs={endMs}
         />
       )}
 
-      <p className={styles.note}>{t('adaptive_routing.pool_scenario')}</p>
+      <p className={styles.note}>
+        {t(profile ? 'adaptive_routing.pool_scenario_learned' : 'adaptive_routing.pool_scenario')}
+      </p>
       <footer className={styles.legend}>
         <span>Pool</span>
         <span className={styles.legendRecorded}>Recorded</span>
@@ -381,7 +411,7 @@ interface PoolChartProps {
   resets: PoolResetMark[];
   poolEmptyAt: number | null;
   now: number;
-  view: PoolView;
+  scale: PoolScale;
   startMs: number;
   endMs: number;
 }
@@ -396,7 +426,7 @@ function PoolChart({
   resets,
   poolEmptyAt,
   now,
-  view,
+  scale,
   startMs,
   endMs,
 }: PoolChartProps) {
@@ -422,16 +452,16 @@ function PoolChart({
 
   const recordedVisible = clip(recorded);
   const projectedVisible = clip(projected);
-  const ticks = viewTicks(view, startMs, endMs);
-  const dayTicks = view.tickMs >= DAY_MS;
+  const ticks = viewTicks(scale, startMs, endMs);
+  const dayTicks = scale.tickMs >= DAY_MS;
   const axisLabels = ticks.flatMap((tick, i) => {
     if (dayTicks) {
-      return i % view.labelEvery === 0
+      return i % scale.labelEvery === 0
         ? [{ t: tick, at: pct(tick + DAY_MS / 2), text: formatAxisDay(tick) }]
         : [];
     }
     const hour = new Date(tick).getHours();
-    const labelHours = (view.tickMs / HOUR_MS) * view.labelEvery;
+    const labelHours = (scale.tickMs / HOUR_MS) * scale.labelEvery;
     if (hour % labelHours !== 0 || pct(tick) < 3 || pct(tick) > 97) return [];
     return [{ t: tick, at: pct(tick), text: hour === 0 ? formatAxisDay(tick) : formatHour(tick) }];
   });
@@ -476,7 +506,7 @@ function PoolChart({
 
         {nowInView && (
           <div className={styles.now} style={{ left: `${pct(now)}%` }}>
-            {/* At offset 0 now is the right edge; keep the label inside the plot. */}
+            {/* With no projection shown now is the right edge; keep the label inside the plot. */}
             <span style={{ transform: `translateX(${edgeShift(pct(now))})` }}>Now</span>
           </div>
         )}
