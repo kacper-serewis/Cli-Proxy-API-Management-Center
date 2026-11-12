@@ -91,9 +91,13 @@ function useTick(ms = 5_000) {
 
 export function ChatsPage() {
   const now = useTick();
+  // The selection lives in state and is only mirrored to the URL: the panel's page
+  // transition keeps rendering a page with the location it opened on until the path
+  // changes, so this page never sees later ?chat= / ?origin= changes through the router.
   const [params, setParams] = useSearchParams();
-  const selected = params.get('chat');
-  const origin = originFilter(params.get('origin'));
+  const [selected, setSelected] = useState<string | null>(() => params.get('chat'));
+  const [originKey, setOriginKey] = useState<string | null>(() => params.get('origin'));
+  const origin = originFilter(originKey);
   const [sessions, setSessions] = useState<RoutingSession[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [showOlder, setShowOlder] = useState(false);
@@ -121,13 +125,20 @@ export function ChatsPage() {
       return next;
     });
 
-  const setParam = (key: string, value: string | null) => {
-    const next = new URLSearchParams(params);
-    if (value) next.set(key, value);
-    else next.delete(key);
-    setParams(next, { replace: false });
+  const mirror = (chat: string | null, originParam: string | null) => {
+    const next = new URLSearchParams();
+    if (chat) next.set('chat', chat);
+    if (originParam) next.set('origin', originParam);
+    setParams(next, { replace: true });
   };
-  const select = (id: string | null) => setParam('chat', id);
+  const select = (id: string | null) => {
+    setSelected(id);
+    mirror(id, originKey);
+  };
+  const chooseOrigin = (key: string | null) => {
+    setOriginKey(key);
+    mirror(selected, key);
+  };
 
   const byId = useMemo(() => new Map((sessions ?? []).map((s) => [s.id, s])), [sessions]);
   const allGroups = useMemo(() => groupChats(sessions ?? []), [sessions]);
@@ -179,7 +190,7 @@ export function ChatsPage() {
                   type="button"
                   className={styles.toggle}
                   aria-pressed={f.key === origin.key}
-                  onClick={() => setParam('origin', f.key === 'all' ? null : f.key)}
+                  onClick={() => chooseOrigin(f.key === 'all' ? null : f.key)}
                 >
                   {f.label}
                   {sessions !== null && <span className={styles.count}>{count}</span>}
