@@ -475,3 +475,32 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.json {
+  margin-top: 0;
+  max-height: 560px;
+
+  &[data-compact='1'] {
+    max-height: 220px;
+    overflow: hidden;
+    cursor: pointer;
+    mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  }
+}
+
+.json_key {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.json_string {
+  color: color-mix(in srgb, var(--success-color) 75%, var(--text-primary));
+}
+
+.json_number {
+  color: color-mix(in srgb, var(--primary-color) 60%, #3b82f6);
+}
+
+.json_literal {
+  color: var(--warning-color);
+}

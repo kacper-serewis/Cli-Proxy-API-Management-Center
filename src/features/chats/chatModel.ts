@@ -165,3 +165,112 @@ export function originLabel(session: RoutingSession | undefined): string {
       return '';
   }
 }
+
+/**
+ * Indents JSON without parsing it, so JSON the proxy cut off (or a stream still arriving)
+ * formats too. Whitespace outside strings is dropped and rewritten.
+ */
+export function prettyJson(text: string, indent = '  '): string {
+  let out = '';
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  const newline = () => `\n${indent.repeat(Math.max(0, depth))}`;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      out += ch;
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    switch (ch) {
+      case '"':
+        inString = true;
+        out += ch;
+        break;
+      case '{':
+      case '[': {
+        let j = i + 1;
+        while (j < text.length && /\s/.test(text[j])) j++;
+        if (text[j] === (ch === '{' ? '}' : ']')) {
+          out += ch + text[j];
+          i = j;
+        } else {
+          depth++;
+          out += ch + newline();
+        }
+        break;
+      }
+      case '}':
+      case ']':
+        depth--;
+        out += newline() + ch;
+        break;
+      case ',':
+        out += ',' + newline();
+        break;
+      case ':':
+        out += ': ';
+        break;
+      default:
+        if (!/\s/.test(ch)) out += ch;
+    }
+  }
+  return out;
+}
+
+const JSON_START = /^[[{]\s*(["{[\]}\d-]|true|false|null)/;
+
+/** Whether text is JSON, or the start of JSON that was cut off. */
+export function looksLikeJson(text: string, truncated = false): boolean {
+  const trimmed = text.trim();
+  if (!JSON_START.test(trimmed)) return false;
+  try {
+    JSON.parse(trimmed);
+    return true;
+  } catch {
+    // Cut-off JSON can't parse; accept it when it was cut and is long enough to tell.
+    return (truncated || !/[}\]]$/.test(trimmed)) && trimmed.length > 40;
+  }
+}
+
+/**
+ * Splits text into prose and a JSON tail, for prompts like "instructions…\n{…}".
+ * json is "" when there is none.
+ */
+export function splitJson(text: string, truncated = false): { prose: string; json: string } {
+  if (looksLikeJson(text, truncated)) return { prose: '', json: text.trim() };
+  for (const match of text.matchAll(/\n\s*[[{]/g)) {
+    const at = (match.index ?? 0) + 1;
+    const tail = text.slice(at);
+    if (looksLikeJson(tail, truncated))
+      return { prose: text.slice(0, at).trimEnd(), json: tail.trim() };
+  }
+  return { prose: text, json: '' };
+}
+
+export type JsonToken = { text: string; kind?: 'key' | 'string' | 'number' | 'literal' };
+
+const JSON_TOKEN =
+  /("(?:[^"\\\n]|\\.)*")(\s*:)?|\b(true|false|null)\b|-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g;
+
+/** Splits formatted JSON into pieces for highlighting. */
+export function tokenizeJson(text: string): JsonToken[] {
+  const tokens: JsonToken[] = [];
+  let last = 0;
+  for (const m of text.matchAll(JSON_TOKEN)) {
+    const at = m.index ?? 0;
+    if (at > last) tokens.push({ text: text.slice(last, at) });
+    if (m[1] !== undefined) {
+      tokens.push({ text: m[1], kind: m[2] ? 'key' : 'string' });
+      if (m[2]) tokens.push({ text: m[2] });
+    } else {
+      tokens.push({ text: m[0], kind: m[3] ? 'literal' : 'number' });
+    }
+    last = at + m[0].length;
+  }
+  if (last < text.length) tokens.push({ text: text.slice(last) });
+  return tokens;
+}
