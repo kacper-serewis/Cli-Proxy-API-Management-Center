@@ -2,7 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import type { ChatMessage, RoutingSession } from '../src/services/api';
 import {
   groupChats,
+  groupMatchesOrigin,
   messageKind,
+  originFilter,
+  originLabel,
   toolSummary,
   visibleBlocks,
 } from '../src/features/chats/chatModel';
@@ -70,5 +73,24 @@ describe('chat model', () => {
       visibleBlocks(blocks, { tools: false, thinking: false, context: false }).map((b) => b.kind)
     ).toEqual(['text']);
     expect(visibleBlocks(blocks, { tools: true, thinking: true, context: false })).toHaveLength(3);
+  });
+
+  test('filters chats by how they were started', () => {
+    const run = { ...session('p', '2026-11-12T09:00:00Z'), origin: 'print' };
+    const [group] = groupChats([run]);
+    expect(groupMatchesOrigin(group, originFilter('print'))).toBe(true);
+    expect(groupMatchesOrigin(group, originFilter('interactive'))).toBe(false);
+    expect(groupMatchesOrigin(group, originFilter(null))).toBe(true);
+    expect(originLabel(run)).toBe('claude -p');
+    expect(originLabel({ ...run, provider: 'codex' })).toBe('codex exec');
+    expect(
+      originLabel({
+        ...run,
+        origin: 'app',
+        user_agent: 'claude-cli/2.1.322 (external, t3-code, agent-sdk/0.3.321)',
+      })
+    ).toBe('T3 Code');
+    const [unknown] = groupChats([session('u', '2026-11-12T09:00:00Z')]);
+    expect(groupMatchesOrigin(unknown, originFilter('other'))).toBe(true);
   });
 });

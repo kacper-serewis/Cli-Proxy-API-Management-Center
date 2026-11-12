@@ -21,6 +21,10 @@ import {
   formatAgo,
   formatClock,
   groupChats,
+  groupMatchesOrigin,
+  originFilter,
+  originLabel,
+  ORIGIN_FILTERS,
   messageKind,
   oneLine,
   sessionLabel,
@@ -89,6 +93,7 @@ export function ChatsPage() {
   const now = useTick();
   const [params, setParams] = useSearchParams();
   const selected = params.get('chat');
+  const origin = originFilter(params.get('origin'));
   const [sessions, setSessions] = useState<RoutingSession[] | null>(null);
   const [failed, setFailed] = useState(false);
   const [showOlder, setShowOlder] = useState(false);
@@ -116,16 +121,19 @@ export function ChatsPage() {
       return next;
     });
 
-  const select = (id: string | null) => {
+  const setParam = (key: string, value: string | null) => {
     const next = new URLSearchParams(params);
-    if (id) next.set('chat', id);
-    else next.delete('chat');
+    if (value) next.set(key, value);
+    else next.delete(key);
     setParams(next, { replace: false });
   };
+  const select = (id: string | null) => setParam('chat', id);
 
   const byId = useMemo(() => new Map((sessions ?? []).map((s) => [s.id, s])), [sessions]);
-  const groups = useMemo(() => groupChats(sessions ?? []), [sessions]);
-  const visible = showOlder ? groups : groups.filter((g) => now - g.lastSeen <= RECENT_MS);
+  const allGroups = useMemo(() => groupChats(sessions ?? []), [sessions]);
+  const inRange = (g: (typeof allGroups)[number]) => showOlder || now - g.lastSeen <= RECENT_MS;
+  const groups = allGroups.filter((g) => groupMatchesOrigin(g, origin));
+  const visible = groups.filter(inRange);
   const hidden = groups.length - visible.length;
   const activeCount = groups.filter((g) => now - g.lastSeen <= ACTIVE_MS).length;
 
@@ -162,6 +170,23 @@ export function ChatsPage() {
 
       <div className={styles.layout}>
         <nav className={styles.list} aria-label="Chats">
+          <div className={styles.originFilters} role="group" aria-label="Started as">
+            {ORIGIN_FILTERS.map((f) => {
+              const count = allGroups.filter((g) => inRange(g) && groupMatchesOrigin(g, f)).length;
+              return (
+                <button
+                  key={f.key}
+                  type="button"
+                  className={styles.toggle}
+                  aria-pressed={f.key === origin.key}
+                  onClick={() => setParam('origin', f.key === 'all' ? null : f.key)}
+                >
+                  {f.label}
+                  {sessions !== null && <span className={styles.count}>{count}</span>}
+                </button>
+              );
+            })}
+          </div>
           <button
             type="button"
             className={styles.listItem}
@@ -170,7 +195,7 @@ export function ChatsPage() {
           >
             <span className={styles.listTitle}>
               <span className={styles.liveDot} data-on={activeCount > 0 ? '1' : undefined} />
-              All chats, live
+              {origin.key === 'all' ? 'All chats, live' : `All ${origin.label} chats, live`}
             </span>
             <span className={styles.listMeta}>
               {activeCount > 0 ? `${activeCount} active now` : 'newest messages first'}
@@ -180,7 +205,9 @@ export function ChatsPage() {
           {sessions !== null && visible.length === 0 && (
             <p className={styles.listEmpty}>
               {groups.length === 0
-                ? 'No chats since the proxy started.'
+                ? origin.key === 'all'
+                  ? 'No chats since the proxy started.'
+                  : `No ${origin.label} chats since the proxy started.`
                 : 'No chats in the last 2 hours.'}
             </p>
           )}
@@ -224,7 +251,7 @@ export function ChatsPage() {
               onBack={() => select(null)}
             />
           ) : (
-            <FeedView filter={filter} onSelect={select} now={now} />
+            <FeedView filter={filter} origins={origin.origins} onSelect={select} now={now} />
           )}
         </section>
       </div>
@@ -277,6 +304,7 @@ function ChatListItem({
         <span className={styles.ellipsis}>{sessionLabel(session, session.id)}</span>
       </span>
       <span className={styles.listMeta}>
+        {!nested && originLabel(session) && <>{originLabel(session)} · </>}
         {shortAccountName(session.auth)} · {session.model.replace(/^claude-/, '')} ·{' '}
         {formatAgo(now - Date.parse(session.last_seen))}
       </span>
@@ -286,10 +314,12 @@ function ChatListItem({
 
 function FeedView({
   filter,
+  origins,
   onSelect,
   now,
 }: {
   filter: BlockFilter;
+  origins: string[];
   onSelect: (id: string) => void;
   now: number;
 }) {
@@ -297,12 +327,12 @@ function FeedView({
   const [failed, setFailed] = useState(false);
   const load = useCallback(async () => {
     try {
-      setFeed(await chatsApi.feed(80, filter.tools));
+      setFeed(await chatsApi.feed(80, filter.tools, origins));
       setFailed(false);
     } catch {
       setFailed(true);
     }
-  }, [filter.tools]);
+  }, [filter.tools, origins]);
   usePoll(load, FEED_MS);
 
   if (!feed) {
@@ -330,7 +360,11 @@ function FeedView({
               <span className={styles.ellipsis}>{sessionLabel(session, item.session_id)}</span>
               {session && (
                 <span className={styles.feedChatMeta}>
-                  {session.parent ? 'subagent · ' : ''}
+                  {session.parent
+                    ? 'subagent · '
+                    : originLabel(session)
+                      ? `${originLabel(session)} · `
+                      : ''}
                   {shortAccountName(session.auth)}
                 </span>
               )}
@@ -400,7 +434,7 @@ function TranscriptView({
         </h2>
         {info && (
           <p className={styles.transcriptMeta}>
-            {info.parent ? 'subagent · ' : ''}
+            {info.parent ? 'subagent · ' : originLabel(info) ? `${originLabel(info)} · ` : ''}
             {shortAccountName(info.auth)} · {info.model} · {info.requests} requests · last{' '}
             {formatAgo(now - Date.parse(info.last_seen))} · {shortSessionId(id)}
           </p>
