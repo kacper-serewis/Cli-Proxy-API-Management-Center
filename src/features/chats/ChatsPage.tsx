@@ -22,6 +22,10 @@ import {
   formatClock,
   groupChats,
   groupMatchesOrigin,
+  looksLikeJson,
+  prettyJson,
+  splitJson,
+  tokenizeJson,
   originFilter,
   originLabel,
   ORIGIN_FILTERS,
@@ -510,16 +514,7 @@ function BlockView({ block, clamp }: { block: ChatBlock; clamp: boolean }) {
   const cut = block.truncated ? <span className={styles.cut}> … (shortened)</span> : null;
   switch (block.kind) {
     case 'text':
-      return (
-        <div
-          className={styles.text}
-          data-clamp={clamp && !open ? '1' : undefined}
-          onClick={clamp && !open ? () => setOpen(true) : undefined}
-        >
-          {block.text}
-          {cut}
-        </div>
-      );
+      return <TextBlock block={block} clamp={clamp} cut={cut} />;
     case 'image':
       return <div className={styles.image}>[{block.name || 'image'}]</div>;
     case 'tool_use':
@@ -528,8 +523,10 @@ function BlockView({ block, clamp }: { block: ChatBlock; clamp: boolean }) {
           label={block.name || 'tool'}
           summary={toolSummary(block)}
           className={styles.tool}
+          open={open}
+          onToggle={setOpen}
         >
-          {block.text}
+          {open && <MaybeJson block={block} />}
           {cut}
         </Collapsible>
       );
@@ -540,34 +537,110 @@ function BlockView({ block, clamp }: { block: ChatBlock; clamp: boolean }) {
           summary={oneLine(block.text ?? '')}
           className={styles.result}
           error={block.error}
+          open={open}
+          onToggle={setOpen}
         >
-          {block.text}
-          {cut}
-        </Collapsible>
-      );
-    case 'thinking':
-      return (
-        <Collapsible
-          label="thinking"
-          summary={oneLine(block.text ?? '')}
-          className={styles.thinking}
-        >
-          {block.text}
+          {open && <MaybeJson block={block} />}
           {cut}
         </Collapsible>
       );
     default:
       return (
         <Collapsible
-          label={block.name || 'context'}
+          label={block.kind === 'thinking' ? 'thinking' : block.name || 'context'}
           summary={oneLine(block.text ?? '')}
-          className={styles.context}
+          className={block.kind === 'thinking' ? styles.thinking : styles.context}
+          open={open}
+          onToggle={setOpen}
         >
-          {block.text}
+          {open && <MaybeJson block={block} />}
           {cut}
         </Collapsible>
       );
   }
+}
+
+/** Prose as written; a JSON part of it indented and highlighted. */
+function TextBlock({
+  block,
+  clamp,
+  cut,
+}: {
+  block: ChatBlock;
+  clamp: boolean;
+  cut: React.ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const text = block.text ?? '';
+  const { prose, json } = useMemo(() => splitJson(text, block.truncated), [text, block.truncated]);
+  const clamped = clamp && !expanded;
+  return (
+    <>
+      {(prose || !json) && (
+        <div
+          className={styles.text}
+          data-clamp={clamped ? '1' : undefined}
+          onClick={clamped ? () => setExpanded(true) : undefined}
+        >
+          {prose}
+          {!json && cut}
+        </div>
+      )}
+      {json && (
+        <JsonView json={json} compact={clamped} onExpand={() => setExpanded(true)}>
+          {cut}
+        </JsonView>
+      )}
+    </>
+  );
+}
+
+/** Tool input/output and context: JSON indented when it is JSON, otherwise as is. */
+function MaybeJson({ block }: { block: ChatBlock }) {
+  const text = block.text ?? '';
+  const json = useMemo(() => looksLikeJson(text, block.truncated), [text, block.truncated]);
+  return json ? <JsonTokens json={text} /> : <>{text}</>;
+}
+
+function JsonView({
+  json,
+  compact,
+  onExpand,
+  children,
+}: {
+  json: string;
+  compact: boolean;
+  onExpand: () => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <pre
+      className={`${styles.pre} ${styles.json}`}
+      data-compact={compact ? '1' : undefined}
+      onClick={compact ? onExpand : undefined}
+      title={compact ? 'Click to show all' : undefined}
+    >
+      <JsonTokens json={json} />
+      {children}
+    </pre>
+  );
+}
+
+function JsonTokens({ json }: { json: string }) {
+  const tokens = useMemo(() => tokenizeJson(prettyJson(json)), [json]);
+  return (
+    <>
+      {tokens.map((token, i) =>
+        token.kind ? (
+          <span key={i} className={styles[`json_${token.kind}`]}>
+            {token.text}
+          </span>
+        ) : (
+          token.text
+        )
+      )}
+    </>
+  );
 }
 
 function Collapsible({
@@ -575,16 +648,25 @@ function Collapsible({
   summary,
   className,
   error = false,
+  open,
+  onToggle,
   children,
 }: {
   label: string;
   summary: string;
   className: string;
   error?: boolean;
+  open: boolean;
+  onToggle: (open: boolean) => void;
   children: React.ReactNode;
 }) {
   return (
-    <details className={`${styles.block} ${className}`} data-error={error ? '1' : undefined}>
+    <details
+      className={`${styles.block} ${className}`}
+      data-error={error ? '1' : undefined}
+      open={open}
+      onToggle={(event) => onToggle(event.currentTarget.open)}
+    >
       <summary>
         <span className={styles.blockLabel}>{label}</span>
         <span className={styles.blockSummary}>{summary}</span>

@@ -3,6 +3,10 @@ import type { ChatMessage, RoutingSession } from '../src/services/api';
 import {
   groupChats,
   groupMatchesOrigin,
+  looksLikeJson,
+  prettyJson,
+  splitJson,
+  tokenizeJson,
   messageKind,
   originFilter,
   originLabel,
@@ -92,5 +96,46 @@ describe('chat model', () => {
     ).toBe('T3 Code');
     const [unknown] = groupChats([session('u', '2026-11-12T09:00:00Z')]);
     expect(groupMatchesOrigin(unknown, originFilter('other'))).toBe(true);
+  });
+});
+
+describe('json in chats', () => {
+  test('formats complete and cut-off JSON', () => {
+    expect(prettyJson('{"a":1,"b":[],"c":{"d":"x, y: {z}"}}')).toBe(
+      '{\n  "a": 1,\n  "b": [],\n  "c": {\n    "d": "x, y: {z}"\n  }\n}'
+    );
+    expect(prettyJson('{"a":[1,2],"b":"cut')).toBe('{\n  "a": [\n    1,\n    2\n  ],\n  "b": "cut');
+  });
+
+  test('recognises JSON only when it is JSON', () => {
+    expect(looksLikeJson('{"eigenaar":"2","berichten":[{"id":"1"}]}')).toBe(true);
+    expect(
+      looksLikeJson('{"eigenaar":"2","berichten":[{"id":"1","tekst":"long enough to tell', true)
+    ).toBe(true);
+    expect(looksLikeJson('{name} is a placeholder')).toBe(false);
+    expect(looksLikeJson('[image]')).toBe(false);
+    expect(looksLikeJson('plain text')).toBe(false);
+  });
+
+  test('splits a prompt into prose and its JSON tail', () => {
+    expect(splitJson('Sort these mails:\n\n{"mails":[{"from":"a"}]}')).toEqual({
+      prose: 'Sort these mails:',
+      json: '{"mails":[{"from":"a"}]}',
+    });
+    expect(splitJson('no json here').json).toBe('');
+  });
+
+  test('tokenizes keys, strings, numbers and literals', () => {
+    const kinds = tokenizeJson('{\n  "a": "b",\n  "n": -1.5,\n  "t": true\n}')
+      .filter((t) => t.kind)
+      .map((t) => `${t.kind}:${t.text}`);
+    expect(kinds).toEqual([
+      'key:"a"',
+      'string:"b"',
+      'key:"n"',
+      'number:-1.5',
+      'key:"t"',
+      'literal:true',
+    ]);
   });
 });
