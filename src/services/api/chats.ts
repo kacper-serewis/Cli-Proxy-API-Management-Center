@@ -51,8 +51,12 @@ export const chatsApi = {
       { params: version === undefined ? { id } : { id, version } }
     ),
   /** Newest messages across all chats, newest first. */
-  feed: (limit = 80, tools = false) =>
+  feed: (limit = 80, tools = false, origins: string[] = []) =>
     apiClient.get<ChatFeedResponse>('/observability/chats/feed', {
-      params: tools ? { limit, tools: 1 } : { limit },
+      params: {
+        limit,
+        ...(tools ? { tools: 1 } : {}),
+        ...(origins.length ? { origin: origins.join(',') } : {}),
+      },
     }),
 };

@@ -92,6 +92,26 @@
   }
 }
 
+.originFilters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 2px 8px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border-color);
+
+  .toggle {
+    padding: 3px 9px;
+    font-size: 12px;
+  }
+}
+
+.count {
+  margin-left: 5px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
 .listItem {
   display: flex;
   flex-direction: column;

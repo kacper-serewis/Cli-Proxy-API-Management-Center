@@ -12,6 +12,9 @@ export interface RoutingSession {
   agent?: string;
   parent?: string;
   title?: string;
+  /** How the client was started: cli, print (claude -p, codex exec), sdk, ide, app or other. */
+  origin?: string;
+  user_agent?: string;
   provider: string;
   auth: string;
   model: string;

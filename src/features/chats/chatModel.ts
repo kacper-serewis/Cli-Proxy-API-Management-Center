@@ -124,3 +124,44 @@ export function messageKind(message: ChatMessage): 'user' | 'assistant' | 'tool'
   if (!prose && message.blocks.every((b) => b.kind === 'context')) return 'system';
   return 'user';
 }
+
+export interface OriginFilter {
+  key: string;
+  label: string;
+  /** Session origins it shows; empty means all. */
+  origins: string[];
+}
+
+export const ORIGIN_FILTERS: OriginFilter[] = [
+  { key: 'all', label: 'All', origins: [] },
+  { key: 'interactive', label: 'Interactive', origins: ['cli', 'ide'] },
+  { key: 'print', label: 'claude -p', origins: ['print'] },
+  { key: 'apps', label: 'SDK & apps', origins: ['sdk', 'app'] },
+  { key: 'other', label: 'Other', origins: ['other'] },
+];
+
+export const originFilter = (key: string | null): OriginFilter =>
+  ORIGIN_FILTERS.find((f) => f.key === key) ?? ORIGIN_FILTERS[0];
+
+/** Whether a chat (or one of its subagents) was started the way the filter asks. */
+export const groupMatchesOrigin = (group: ChatGroup, filter: OriginFilter) =>
+  filter.origins.length === 0 ||
+  [group.main, ...group.subagents].some((s) => filter.origins.includes(s.origin || 'other'));
+
+/** Short label for how a chat was started. */
+export function originLabel(session: RoutingSession | undefined): string {
+  switch (session?.origin) {
+    case 'cli':
+      return session.provider === 'codex' ? 'codex' : 'interactive';
+    case 'print':
+      return session.provider === 'codex' ? 'codex exec' : 'claude -p';
+    case 'sdk':
+      return 'SDK';
+    case 'app':
+      return /t3[- ]code/i.test(session.user_agent ?? '') ? 'T3 Code' : 'app';
+    case 'ide':
+      return 'IDE';
+    default:
+      return '';
+  }
+}
