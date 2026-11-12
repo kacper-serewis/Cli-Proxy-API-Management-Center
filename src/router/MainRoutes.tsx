@@ -14,6 +14,7 @@ import { ConfigPage } from '@/features/config/ConfigPage';
 import { LogsPage } from '@/features/logs/LogsPage';
 import { SystemPage } from '@/pages/SystemPage';
 import { ForkPage } from '@/features/fork/ForkPage';
+import { ChatsPage } from '@/features/chats/ChatsPage';
 import { useAuthStore } from '@/stores';
 
 const createMainRoutes = (supportsPlugin: boolean) => [
@@ -31,6 +32,7 @@ const createMainRoutes = (supportsPlugin: boolean) => [
   { path: '/oauth', element: <OAuthPage /> },
   { path: '/routing', element: <RoutingPage /> },
   { path: '/quota', element: <QuotaPage /> },
+  { path: '/chats', element: <ChatsPage /> },
   { path: '/fork', element: <ForkPage /> },
   ...(supportsPlugin
     ? [

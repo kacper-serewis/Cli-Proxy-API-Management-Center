@@ -18,3 +18,4 @@ export * from './vertex';
 export * from './quotaHistory';
 export * from './routingActivity';
 export * from './forkStatus';
+export * from './chats';

@@ -133,3 +133,14 @@ tr[data-nested='1'] .chatTitle {
   text-align: center;
   color: var(--text-tertiary);
 }
+
+.chatsLink {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-tertiary);
+
+  a {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+}
