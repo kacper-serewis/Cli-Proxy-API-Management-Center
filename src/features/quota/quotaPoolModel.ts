@@ -697,3 +697,25 @@ export function viewTicks(scale: PoolScale, startMs: number, endMs: number): num
   }
   return ticks;
 }
+
+/** Conservative projection input: retain the high reading within this reset window.
+ * The displayed usage remains the latest observation. Matches CliproxyBar's high water. */
+export function headroomAccounts(
+  accounts: PoolAccount[],
+  history: Map<string, PoolHistoryPoint[]>,
+  now: number
+): PoolAccount[] {
+  return accounts.map((account) => {
+    if (account.resetAtMs === null || account.resetAtMs <= now) return account;
+    let remaining = account.remaining;
+    for (const point of history.get(account.name) ?? []) {
+      if (
+        point.t * 1000 <= now &&
+        Math.abs(point.long_reset * 1000 - account.resetAtMs) < 600_000
+      ) {
+        remaining = Math.min(remaining, clamp(100 - point.long_used * 100));
+      }
+    }
+    return { ...account, remaining };
+  });
+}

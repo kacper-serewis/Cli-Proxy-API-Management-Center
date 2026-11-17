@@ -2536,5 +2536,14 @@
     "refresh_failed": "라우팅 새로 고침 실패. 마지막으로 받은 결정을 표시합니다.",
     "pool_scenario": "점선 풀 예측은 일정한 사용 속도와 가장 빠른 초기화 할당량의 우선 사용을 가정합니다. 적응형 예약이나 대화 유지를 시뮬레이션하지 않습니다. 실제 라우팅 결정은 위 계정에서 확인하세요.",
     "pool_scenario_learned": "점선 풀 예측은 기록된 이력에서 학습한 사용 리듬(시간대, 평일 또는 주말)을 따르고, 최근 사용 속도에서 시작하며, 가장 빨리 초기화되는 할당량을 먼저 사용합니다. 적응형 예약이나 대화 유지를 시뮬레이션하지 않습니다. 실제 라우팅 결정은 위 계정에서 확인하세요."
+  },
+  "quota_headroom": {
+    "lost": "Headroom lost",
+    "returns": "Headroom returns",
+    "now": "Now",
+    "none": "Not by {{date}}",
+    "next_five": "Not in the next 5h",
+    "gap": "No safe headroom",
+    "scenario": "The projection spends each account’s 5-hour and weekly quota together, following the learned rhythm and current workload shares. Red bands mark periods with no safe seat; fallback quota may still work. Work pauses during these periods and resumes after a reset."
   }
 }

@@ -2536,5 +2536,14 @@
     "refresh_failed": "Routing refresh failed. Showing the last successful decisions.",
     "pool_scenario": "The dashed pool projection is a constant-pace scenario that spends the soonest-reset quota first. It does not simulate adaptive reserves or chat affinity; use Accounts above for actual routing decisions.",
     "pool_scenario_learned": "The dashed pool projection follows the usage rhythm learned from recorded history (hour of day, weekday or weekend), starts from the recent pace and spends the soonest-reset quota first. It does not simulate adaptive reserves or chat affinity; use Accounts above for actual routing decisions."
+  },
+  "quota_headroom": {
+    "lost": "Headroom lost",
+    "returns": "Headroom returns",
+    "now": "Now",
+    "none": "Not by {{date}}",
+    "next_five": "Not in the next 5h",
+    "gap": "No safe headroom",
+    "scenario": "The projection spends each account’s 5-hour and weekly quota together, following the learned rhythm and current workload shares. Red bands mark periods with no safe seat; fallback quota may still work. Work pauses during these periods and resumes after a reset."
   }
 }

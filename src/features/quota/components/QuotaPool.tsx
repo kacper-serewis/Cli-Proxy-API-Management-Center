@@ -18,6 +18,7 @@ import {
   accountFromHistory,
   burnRatePerHour,
   historyByAccount,
+  headroomAccounts,
   learnUsageProfile,
   mergeResetLabels,
   POOL_AHEAD,
@@ -44,13 +45,20 @@ import type {
 } from '../quotaPoolModel';
 import type { QuotaFileEntry } from '../logic';
 import type { QuotaCardState } from '../providers';
+import { projectJointPool } from '../jointQuotaProjection';
+import type { JointProjection, HeadroomGap } from '../jointQuotaProjection';
 import styles from './QuotaPool.module.scss';
 
 const POOL_PROVIDERS = [
   { type: 'claude', label: 'Claude', windowIds: ['seven-day'], shortWindowIds: ['five-hour'] },
   // Which slot carries the weekly limit depends on the plan; take the longest. No 5h pool:
   // the same slot may be the weekly one.
-  { type: 'codex', label: 'Codex', windowIds: ['five-hour', 'weekly', 'monthly'], shortWindowIds: [] },
+  {
+    type: 'codex',
+    label: 'Codex',
+    windowIds: ['five-hour', 'weekly', 'monthly'],
+    shortWindowIds: [],
+  },
 ] as const;
 /**
  * The 5h pool reacts to the last hour's burn and has its own fixed range: two windows back
@@ -338,7 +346,7 @@ interface PoolCardProps {
   endMs: number;
 }
 
-function PoolCard({
+export function PoolCard({
   label,
   color,
   totalAccounts,
@@ -370,24 +378,82 @@ function PoolCard({
     () => learnUsageProfile(shapeHistory, accounts, history, now),
     [shapeHistory, accounts, history, now]
   );
-  const projection = useMemo(
+  const joint = useMemo(() => {
+    if (
+      accounts.length !== totalAccounts ||
+      (label === 'Claude' && shortAccounts.length !== accounts.length)
+    )
+      return null;
+    const shortBurn = burnRatePerHour(shortAccounts, shortHistory, SHORT_BURN_HOURS, now, true);
+    const ratio = shortPerLongPoint(accounts, history, shortHistory, now);
+    const shares = new Map(
+      accounts.map((a) => [
+        a.name,
+        shortBurn > 0
+          ? burnRatePerHour(
+              shortAccounts.filter((s) => s.name === a.name),
+              shortHistory,
+              1,
+              now,
+              true
+            )
+          : burnRatePerHour([a], history, 24, now),
+      ])
+    );
+    return projectJointPool(
+      headroomAccounts(accounts, history, now),
+      headroomAccounts(shortAccounts, shortHistory, now),
+      projectedRate(profile, burn, burnWindow, now),
+      reactiveRate(profile, ratio, shortBurn, SHORT_BURN_HOURS, now),
+      shares,
+      now,
+      projectionEnd
+    );
+  }, [
+    accounts,
+    totalAccounts,
+    label,
+    shortAccounts,
+    shortHistory,
+    history,
+    profile,
+    burn,
+    burnWindow,
+    now,
+    projectionEnd,
+  ]);
+  const independent = useMemo(
     () => projectPool(accounts, projectedRate(profile, burn, burnWindow, now), now, projectionEnd),
     [accounts, profile, burn, burnWindow, now, projectionEnd]
   );
+  const projection = joint?.long ?? independent;
+  const gap = joint?.gaps[0];
   const nextReset = projection.resets[0] ?? null;
 
   const stats = [
     {
-      label: 'Pool empty',
-      value: projection.poolEmptyAt
-        ? formatInstant(projection.poolEmptyAt)
-        : `Not by ${formatShortDate(projectionEnd)}`,
+      label: joint ? t('quota_headroom.lost') : 'Pool empty',
+      value: joint
+        ? gap
+          ? gap.start <= now
+            ? t('quota_headroom.now')
+            : formatInstant(gap.start)
+          : t('quota_headroom.none', { date: formatShortDate(projectionEnd) })
+        : projection.poolEmptyAt
+          ? formatInstant(projection.poolEmptyAt)
+          : `Not by ${formatShortDate(projectionEnd)}`,
     },
     {
-      label: 'First empty',
-      value: projection.firstEmpty
-        ? `${projection.firstEmpty.name} in ${formatDuration(projection.firstEmpty.t - now)}`
-        : `None by ${formatShortDate(projectionEnd)}`,
+      label: joint ? t('quota_headroom.returns') : 'First empty',
+      value: joint
+        ? gap?.end
+          ? formatInstant(gap.end)
+          : gap
+            ? t('quota_headroom.none', { date: formatShortDate(projectionEnd) })
+            : '—'
+        : projection.firstEmpty
+          ? `${projection.firstEmpty.name} in ${formatDuration(projection.firstEmpty.t - now)}`
+          : `None by ${formatShortDate(projectionEnd)}`,
     },
     {
       label: 'Next reset',
@@ -396,7 +462,9 @@ function PoolCard({
     { label: `Burn, last ${burnWindow}h`, value: `${burn.toFixed(1)}%/h` },
     {
       label: 'Typical week',
-      value: profile ? `${formatPercent(profile.perWeek)} of ${formatPercent(capacity)}` : 'Learning',
+      value: profile
+        ? `${formatPercent(profile.perWeek)} of ${formatPercent(capacity)}`
+        : 'Learning',
     },
   ];
 
@@ -437,6 +505,7 @@ function PoolCard({
           projected={projection.series}
           resets={[...recorded.resets, ...projection.resets]}
           poolEmptyAt={projection.poolEmptyAt}
+          gaps={joint?.gaps}
           now={now}
           scale={scale}
           startMs={startMs}
@@ -445,12 +514,17 @@ function PoolCard({
       )}
 
       <p className={styles.note}>
-        {t(profile ? 'adaptive_routing.pool_scenario_learned' : 'adaptive_routing.pool_scenario')}
+        {joint
+          ? t('quota_headroom.scenario')
+          : t(
+              profile ? 'adaptive_routing.pool_scenario_learned' : 'adaptive_routing.pool_scenario'
+            )}
       </p>
       <footer className={styles.legend}>
         <span>Pool</span>
         <span className={styles.legendRecorded}>Recorded</span>
         <span className={styles.legendProjected}>Projected</span>
+        {joint && <span className={styles.headroomLegend}>{t('quota_headroom.gap')}</span>}
       </footer>
 
       {shortAccounts.length > 0 && (
@@ -460,6 +534,7 @@ function PoolCard({
           history={history}
           shortHistory={shortHistory}
           profile={profile}
+          joint={joint}
           now={now}
         />
       )}
@@ -473,6 +548,7 @@ interface ShortPoolProps {
   history: Map<string, PoolHistoryPoint[]>;
   shortHistory: Map<string, PoolHistoryPoint[]>;
   profile: UsageProfile | null;
+  joint: JointProjection | null;
   now: number;
 }
 
@@ -480,7 +556,16 @@ interface ShortPoolProps {
  * The pooled 5h window under the weekly chart, on its own range of hours. The projection
  * starts at the last hour's burn and then follows the learned rhythm.
  */
-function ShortPool({ accounts, longAccounts, history, shortHistory, profile, now }: ShortPoolProps) {
+function ShortPool({
+  accounts,
+  longAccounts,
+  history,
+  shortHistory,
+  profile,
+  joint,
+  now,
+}: ShortPoolProps) {
+  const { t } = useTranslation();
   const capacity = accounts.length * 100;
   const remaining = accounts.reduce((sum, account) => sum + account.remaining, 0);
   const startMs = now - SHORT_BACK_MS;
@@ -499,7 +584,7 @@ function ShortPool({ accounts, longAccounts, history, shortHistory, profile, now
     () => recordedSeries(accounts, shortHistory, startMs, now),
     [accounts, shortHistory, startMs, now]
   );
-  const projection = useMemo(
+  const independent = useMemo(
     () =>
       projectPool(
         accounts,
@@ -509,13 +594,25 @@ function ShortPool({ accounts, longAccounts, history, shortHistory, profile, now
       ),
     [accounts, profile, pointsPerWeeklyPoint, burn, now, endMs]
   );
-  const lowest = projection.series.reduce((min, point) => Math.min(min, point.v), remaining);
+  const projection = joint?.short ?? independent;
+  const gap = joint?.gaps.find((g) => g.start < endMs);
+  const lowest = projection.series
+    .filter((point) => point.t <= endMs)
+    .reduce((min, point) => Math.min(min, point.v), remaining);
   const nextReset = projection.resets[0] ?? null;
 
   const stats = [
     {
-      label: 'Pool empty',
-      value: projection.poolEmptyAt ? formatHour(projection.poolEmptyAt) : 'Not in the next 5h',
+      label: joint ? t('quota_headroom.lost') : 'Pool empty',
+      value: joint
+        ? gap
+          ? gap.start <= now
+            ? t('quota_headroom.now')
+            : formatHour(gap.start)
+          : t('quota_headroom.next_five')
+        : projection.poolEmptyAt
+          ? formatHour(projection.poolEmptyAt)
+          : 'Not in the next 5h',
     },
     { label: 'Lowest point', value: `${formatPercent(lowest)} left` },
     {
@@ -553,6 +650,7 @@ function ShortPool({ accounts, longAccounts, history, shortHistory, profile, now
           projected={projection.series}
           resets={[...recorded.resets, ...projection.resets]}
           poolEmptyAt={projection.poolEmptyAt}
+          gaps={joint?.gaps}
           now={now}
           scale={scale}
           startMs={startMs}
@@ -577,6 +675,7 @@ interface PoolChartProps {
   projected: PoolSeriesPoint[];
   resets: PoolResetMark[];
   poolEmptyAt: number | null;
+  gaps?: HeadroomGap[];
   now: number;
   scale: PoolScale;
   startMs: number;
@@ -592,11 +691,13 @@ function PoolChart({
   projected,
   resets,
   poolEmptyAt,
+  gaps = [],
   now,
   scale,
   startMs,
   endMs,
 }: PoolChartProps) {
+  const { t } = useTranslation();
   const x = (t: number) => ((t - startMs) / (endMs - startMs)) * CHART_W;
   const y = (v: number) => CHART_H - (Math.min(Math.max(v, 0), capacity) / capacity) * CHART_H;
   const pct = (t: number) => ((t - startMs) / (endMs - startMs)) * 100;
@@ -665,12 +766,31 @@ function PoolChart({
               y2={CHART_H}
             />
           ))}
+          {gaps
+            .filter((gap) => gap.start < endMs && (gap.end ?? endMs) > startMs)
+            .map((gap) => (
+              <rect
+                key={gap.start}
+                className={styles.headroomGap}
+                x={x(Math.max(startMs, gap.start))}
+                y={0}
+                width={x(Math.min(endMs, gap.end ?? endMs)) - x(Math.max(startMs, gap.start))}
+                height={CHART_H}
+              />
+            ))}
           <path className={styles.areaRecorded} d={area(recordedVisible)} />
           <path className={styles.areaProjected} d={area(projectedVisible)} />
           <path className={styles.lineRecorded} d={line(recordedVisible)} />
           <path className={styles.lineProjected} d={line(projectedVisible)} />
         </svg>
 
+        {gaps.length > 0 && inView(gaps[0].start) && (
+          <div className={styles.headroomMark} style={{ left: `${pct(gaps[0].start)}%` }}>
+            <span style={{ transform: `translateX(${edgeShift(pct(gaps[0].start))})` }}>
+              {t('quota_headroom.gap')}
+            </span>
+          </div>
+        )}
         {nowInView && (
           <div className={styles.now} style={{ left: `${pct(now)}%` }}>
             {/* With no projection shown now is the right edge; keep the label inside the plot. */}
@@ -699,9 +819,7 @@ function PoolChart({
               style={{
                 left: `${emptyPct}%`,
                 transform:
-                  emptyPct > 80
-                    ? 'translate(calc(-100% - 8px), -140%)'
-                    : 'translate(8px, -140%)',
+                  emptyPct > 80 ? 'translate(calc(-100% - 8px), -140%)' : 'translate(8px, -140%)',
               }}
             >
               Empty {formatInstant(poolEmptyAt)}

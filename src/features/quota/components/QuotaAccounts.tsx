@@ -13,14 +13,15 @@ import type { RoutingCandidate, RoutingSession } from '@/services/api';
 import type { PoolHistoryPoint } from '@/features/quota/quotaPoolModel';
 import { TYPE_COLORS } from '@/utils/quota';
 import { accountProvider, shortAccountName } from '../accountNames';
+import { SHORT_HEADROOM_LIMIT, LONG_HEADROOM_LIMIT } from '../jointQuotaProjection';
 import styles from './QuotaAccounts.module.scss';
 
 /** New chats skip an account at this 5h usage. */
-export const SHORT_SATURATION = 0.8;
+export const SHORT_SATURATION = SHORT_HEADROOM_LIMIT / 100;
 /** Existing chats move off an account at this 5h usage. */
-export const SHORT_DRAIN = 0.9;
+export const SHORT_DRAIN = 0.95;
 /** The router treats an account's week as used up at this level. */
-export const LONG_SATURATION = 0.97;
+export const LONG_SATURATION = LONG_HEADROOM_LIMIT / 100;
 /** A chat counts as active when it sent a request this recently. */
 const ACTIVE_MS = 30 * 60 * 1000;
 

@@ -2529,5 +2529,14 @@
     "refresh_failed": "路由刷新失败。显示上次成功获取的决策。",
     "pool_scenario": "虚线池预测假设用量速率不变，并先使用最早重置的配额。它不模拟自适应预留或会话绑定；实际路由决策请查看上方账户。",
     "pool_scenario_learned": "虚线池预测遵循从历史记录学到的使用节奏（一天中的时段、工作日或周末），从近期用量速率开始，并先使用最早重置的配额。它不模拟自适应预留或会话绑定；实际路由决策请查看上方账户。"
+  },
+  "quota_headroom": {
+    "lost": "Headroom lost",
+    "returns": "Headroom returns",
+    "now": "Now",
+    "none": "Not by {{date}}",
+    "next_five": "Not in the next 5h",
+    "gap": "No safe headroom",
+    "scenario": "The projection spends each account’s 5-hour and weekly quota together, following the learned rhythm and current workload shares. Red bands mark periods with no safe seat; fallback quota may still work. Work pauses during these periods and resumes after a reset."
   }
 }

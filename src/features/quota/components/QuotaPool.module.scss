@@ -338,3 +338,27 @@
     height: 150px;
   }
 }
+
+.headroomGap {
+  fill: var(--danger-color, #dc2626);
+  opacity: 0.14;
+}
+
+.headroomLegend {
+  color: var(--danger-color, #dc2626);
+}
+
+.headroomMark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px dashed var(--danger-color, #dc2626);
+  pointer-events: none;
+  span {
+    position: absolute;
+    top: 18px;
+    white-space: nowrap;
+    color: var(--danger-color, #dc2626);
+    font-size: 11px;
+  }
+}

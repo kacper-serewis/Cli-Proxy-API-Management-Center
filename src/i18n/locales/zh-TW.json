@@ -2557,5 +2557,14 @@
     "refresh_failed": "路由重新整理失敗。顯示上次成功取得的決策。",
     "pool_scenario": "虛線池預測假設用量速率不變，並先使用最早重設的配額。它不模擬自適應預留或對話綁定；實際路由決策請查看上方帳戶。",
     "pool_scenario_learned": "虛線池預測依循從歷史記錄學到的使用節奏（一天中的時段、平日或週末），從近期用量速率開始，並先使用最早重設的配額。它不模擬自適應預留或對話綁定；實際路由決策請查看上方帳戶。"
+  },
+  "quota_headroom": {
+    "lost": "Headroom lost",
+    "returns": "Headroom returns",
+    "now": "Now",
+    "none": "Not by {{date}}",
+    "next_five": "Not in the next 5h",
+    "gap": "No safe headroom",
+    "scenario": "The projection spends each account’s 5-hour and weekly quota together, following the learned rhythm and current workload shares. Red bands mark periods with no safe seat; fallback quota may still work. Work pauses during these periods and resumes after a reset."
   }
 }
