@@ -1,10 +1,10 @@
 // Upstream cedar_ember contract, following opencodex anthropic-reset-grants.
 import { apiCallApi } from './apiCall';
+import { claudeUsageReader, type ClaudeUsageSnapshot } from './claudeUsageCache';
 import { CLAUDE_REQUEST_HEADERS } from '@/utils/quota/constants';
 
 export const ANTHROPIC_API_ORIGIN = 'https://api.anthropic.com';
 export const ANTHROPIC_RESET_GRANT_PROGRAM = 'cedar_ember';
-export const ANTHROPIC_RESET_GRANT_STATUS_PATH = '/api/oauth/usage?cedar_ember=1&skip_spend=1';
 export const ANTHROPIC_PROFILE_PATH = '/api/oauth/profile';
 /** Same bound the Claude Code client uses for the claim. */
 export const ANTHROPIC_RESET_GRANT_REDEEM_TIMEOUT_MS = 25_000;
@@ -281,11 +281,28 @@ async function readAccount(authIndex: string, path: string): Promise<Record<stri
   return response.body;
 }
 
+/** Grants from a usage snapshot the proxy read; a failed last read is an error. */
+function grantsFromUsage(snapshot: ClaudeUsageSnapshot, fresh: boolean) {
+  const status = snapshot.last_status;
+  if (fresh || snapshot.body === undefined) {
+    if (status === 429) throw new AnthropicResetGrantError('rate_limited');
+    if (status === 401 || status === 403) throw new AnthropicResetGrantError('auth');
+    if (status !== 200 || !isRecord(snapshot.body)) throw new AnthropicResetGrantError('upstream');
+  }
+  if (!isRecord(snapshot.body)) throw new AnthropicResetGrantError('upstream');
+  const grants = parseAnthropicResetGrantStatus(snapshot.body.cedar_ember);
+  if (!grants) throw new AnthropicResetGrantError('malformed');
+  return grants;
+}
+
+/** A fresh read through the proxy's single usage reader, for the spend preflight. */
 export async function readClaudeResetGrants(authIndex: string) {
-  const body = await readAccount(authIndex, ANTHROPIC_RESET_GRANT_STATUS_PATH);
-  const status = parseAnthropicResetGrantStatus(body.cedar_ember);
-  if (!status) throw new AnthropicResetGrantError('malformed');
-  return status;
+  return grantsFromUsage(await claudeUsageReader.read(authIndex, { fresh: true }), true);
+}
+
+/** The grants as the proxy last read them, for display on the card. */
+export async function readCachedClaudeResetGrants(authIndex: string) {
+  return grantsFromUsage(await claudeUsageReader.read(authIndex), false);
 }
 
 export async function readClaudeOrganization(authIndex: string) {

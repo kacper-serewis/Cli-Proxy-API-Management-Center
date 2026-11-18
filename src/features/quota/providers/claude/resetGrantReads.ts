@@ -1,5 +1,5 @@
 import { apiClient } from '@/services/api/client';
-import { readClaudeResetGrants } from '@/services/api/claudeResetGrants';
+import { readCachedClaudeResetGrants } from '@/services/api/claudeResetGrants';
 
 export const RESET_GRANT_READ_DELAY_MS = 2000;
 
@@ -15,11 +15,11 @@ export function scheduleResetGrantRead(start: () => void, current: () => boolean
 export function createResetGrantReader(
   deps = {
     revision: () => apiClient.getConnectionRevision(),
-    read: readClaudeResetGrants,
+    read: readCachedClaudeResetGrants,
   }
 ) {
   let session = deps.revision();
-  const inFlight = new Map<string, ReturnType<typeof readClaudeResetGrants>>();
+  const inFlight = new Map<string, ReturnType<typeof readCachedClaudeResetGrants>>();
   return (authIndex: string) => {
     const revision = deps.revision();
     if (revision !== session) {

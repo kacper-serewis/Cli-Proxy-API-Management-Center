@@ -3,7 +3,7 @@ import {
   resetGrantKind,
 } from '../src/features/quota/providers/claude/resetGrantChoice';
 
-import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { apiClient } from '../src/services/api/client';
 import {
   anthropicResetGrantBlocker,
@@ -31,8 +31,31 @@ const grant = { id: 'test-grant', resets_total: 2, resets_left: 2, usable_now: t
 const block = { eligible: true, at_limit: true, grants: [grant] };
 const status = () => parseAnthropicResetGrantStatus(block)!;
 const originalRequest = apiCallApi.request;
+/**
+ * Usage (with the grants) now comes from the proxy's single reader. The bridge answers
+ * its refresh endpoint from the apiCallApi mock, recorded under PROXY_USAGE, so each test
+ * keeps describing upstream answers; other management POSTs (cooldown reset) succeed.
+ */
+const PROXY_USAGE = 'proxy:/observability/claude-usage/refresh';
+let bridge: { mockRestore: () => void } | undefined;
+beforeEach(() => {
+  bridge = spyOn(apiClient, 'post').mockImplementation(async (path, data) => {
+    if (path !== '/observability/claude-usage/refresh') return { status: 'ok', auth_index: 'index' };
+    const authIndex = (data as { auth_index: string }).auth_index;
+    const response = await apiCallApi.request({ authIndex, method: 'GET', url: PROXY_USAGE });
+    return {
+      auth_id: 'account.json',
+      auth_index: authIndex,
+      last_status: response.statusCode,
+      ...(response.statusCode === 200
+        ? { body: response.body, observed_at: new Date().toISOString() }
+        : {}),
+    };
+  });
+});
 afterEach(() => {
   apiCallApi.request = originalRequest;
+  bridge?.mockRestore();
 });
 
 describe('Claude reset grant fail-closed parsing', () => {
@@ -93,7 +116,7 @@ test('exact proxied GET/profile/claim contract, no provider token in frontend', 
   await readClaudeResetGrants('index');
   expect(await readClaudeOrganization('index')).toBe(organization);
   expect(await claimClaudeResetGrant('index', organization, grant.id, 'request-1')).toBe('reset');
-  expect(calls[0].url).toBe('https://api.anthropic.com/api/oauth/usage?cedar_ember=1&skip_spend=1');
+  expect(calls[0].url).toBe(PROXY_USAGE);
   expect(calls[1].url).toBe('https://api.anthropic.com/api/oauth/profile');
   expect(calls[2].url).toBe(
     `https://api.anthropic.com/api/organizations/${organization}/reset_rate_limits`
@@ -105,6 +128,7 @@ test('exact proxied GET/profile/claim contract, no provider token in frontend', 
   });
   for (const call of calls) {
     expect(call.authIndex).toBe('index');
+    if (call.url === PROXY_USAGE) continue; // The proxy sends its own headers.
     expect(call.header?.Authorization).toBe('Bearer $TOKEN$');
     expect(call.header?.['anthropic-beta']).toBe('oauth-2025-04-20');
     expect(call.header?.['User-Agent']).toBe('claude-cli/2.1.280 (external, cli)');
@@ -202,10 +226,6 @@ function mockDefaultResetRequests(result: 'reset' | 'unknown' = 'reset') {
 
 describe('Claude reset grant default request ID integration', () => {
   test('HTTP crypto without randomUUID still dispatches a valid reset claim', async () => {
-    using cooldown = spyOn(apiClient, 'post').mockResolvedValue({
-      status: 'ok',
-      auth_index: 'index',
-    });
     const calls = mockDefaultResetRequests();
     let randomCalls = 0;
     await withGlobalCrypto(
@@ -224,7 +244,7 @@ describe('Claude reset grant default request ID integration', () => {
         });
         expect(calls.map((call) => call.method)).toEqual(['GET', 'GET', 'POST']);
         expect(calls[0].url).toEndWith('/api/oauth/profile');
-        expect(calls[1].url).toEndWith('/api/oauth/usage?cedar_ember=1&skip_spend=1');
+        expect(calls[1].url).toBe(PROXY_USAGE);
         expect(calls[2].url).toBe(
           `https://api.anthropic.com/api/organizations/${organization}/reset_rate_limits`
         );
@@ -241,7 +261,9 @@ describe('Claude reset grant default request ID integration', () => {
           code: 'reset',
         });
         expect(randomCalls).toBe(1);
-        expect(cooldown).toHaveBeenCalledWith('/routing/cooldown/reset', { auth_index: 'index' });
+        expect(apiClient.post).toHaveBeenCalledWith('/routing/cooldown/reset', {
+          auth_index: 'index',
+        });
       }
     );
   });

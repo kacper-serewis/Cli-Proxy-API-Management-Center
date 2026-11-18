@@ -14,11 +14,11 @@ import type {
   ClaudeUsageWindow,
   ClaudeUsagePayload,
 } from '@/types';
-import { apiCallApi, getApiCallErrorMessage } from '@/services/api';
+import { apiCallApi } from '@/services/api';
+import { claudeUsageReader, isClaudeUsageStale } from '@/services/api/claudeUsageCache';
 import { normalizeClaudeUsageSnapshot } from '@/services/api/claudeUsage';
 import {
   CLAUDE_PROFILE_URL,
-  CLAUDE_USAGE_URL,
   CLAUDE_REQUEST_HEADERS,
   CLAUDE_USAGE_WINDOW_KEYS,
   claudePeriodHours,
@@ -40,6 +40,7 @@ export type ClaudeQuotaData = {
   planType?: string | null;
   dollarWindows: ClaudeDollarWindow[];
   observedAt: string;
+  stale?: boolean;
 };
 
 export const hasClaudeUsageData = (quota?: ClaudeQuotaState): boolean =>
@@ -205,6 +206,18 @@ export const resolveClaudePlanType = (profile: ClaudeProfileResponse | null): st
   return null;
 };
 
+const readClaudeProfile = async (authIndex: string) => {
+  const response = await apiCallApi.request({
+    authIndex,
+    method: 'GET',
+    url: CLAUDE_PROFILE_URL,
+    header: { ...CLAUDE_REQUEST_HEADERS },
+  });
+  return response.statusCode >= 200 && response.statusCode < 300
+    ? (response.body ?? response.bodyText)
+    : undefined;
+};
+
 const fetchClaudeQuota = async (file: AuthFileItem, t: TFunction): Promise<ClaudeQuotaData> => {
   const rawAuthIndex = file['auth_index'] ?? file.authIndex;
   const authIndex = normalizeAuthIndex(rawAuthIndex);
@@ -213,31 +226,27 @@ const fetchClaudeQuota = async (file: AuthFileItem, t: TFunction): Promise<Claud
   }
 
   const [usageResult, profileResult] = await Promise.allSettled([
-    apiCallApi.request({
-      authIndex,
-      method: 'GET',
-      url: CLAUDE_USAGE_URL,
-      header: { ...CLAUDE_REQUEST_HEADERS, Accept: 'application/json' },
-    }),
-    apiCallApi.request({
-      authIndex,
-      method: 'GET',
-      url: CLAUDE_PROFILE_URL,
-      header: { ...CLAUDE_REQUEST_HEADERS },
-    }),
+    claudeUsageReader.read(authIndex),
+    readClaudeProfile(authIndex),
   ]);
 
   if (usageResult.status === 'rejected') {
     throw usageResult.reason;
   }
 
-  const result = usageResult.value;
+  const usage = usageResult.value;
 
-  if (result.statusCode < 200 || result.statusCode >= 300) {
-    throw createStatusError(getApiCallErrorMessage(result), result.statusCode);
+  // Without any good read yet there is nothing to show; after one, a failed read only
+  // marks the card stale.
+  if (usage.body === undefined) {
+    const status = usage.last_status ?? 0;
+    throw createStatusError(
+      status === 429 ? 'Rate limited. Please try again later.' : `HTTP ${status || 'error'}`,
+      status
+    );
   }
 
-  const payload = parseClaudeUsagePayload(result.body ?? result.bodyText);
+  const payload = parseClaudeUsagePayload(usage.body);
   if (!payload) {
     throw new Error(t('claude_quota.empty_windows'));
   }
@@ -254,19 +263,16 @@ const fetchClaudeQuota = async (file: AuthFileItem, t: TFunction): Promise<Claud
       !dollarWindows.some((balance) => balance.key === 'iguana_necktie')
   );
   const planType =
-    profileResult.status === 'fulfilled' &&
-    profileResult.value.statusCode >= 200 &&
-    profileResult.value.statusCode < 300
-      ? resolveClaudePlanType(
-          parseClaudeProfilePayload(profileResult.value.body ?? profileResult.value.bodyText)
-        )
+    profileResult.status === 'fulfilled' && profileResult.value !== undefined
+      ? resolveClaudePlanType(parseClaudeProfilePayload(profileResult.value))
       : null;
 
   return {
     windows,
     extraUsage: snapshot.extraUsage,
     dollarWindows,
-    observedAt: new Date().toISOString(),
+    observedAt: usage.observed_at ?? new Date().toISOString(),
+    stale: isClaudeUsageStale(usage),
     planType,
   };
 };
@@ -286,7 +292,7 @@ export const CLAUDE_CONFIG: QuotaProviderData<ClaudeQuotaState, ClaudeQuotaData>
     planType: data.planType,
     dollarWindows: data.dollarWindows,
     observedAt: data.observedAt,
-    stale: false,
+    stale: data.stale,
   }),
   buildErrorState: (message, status) => ({
     status: 'error',
