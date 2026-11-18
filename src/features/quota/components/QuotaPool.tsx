@@ -20,7 +20,6 @@ import {
   fablePerLongPoint,
   fableWindowHistory,
   historyByAccount,
-  headroomAccounts,
   learnUsageProfile,
   mergeResetLabels,
   POOL_AHEAD,
@@ -47,7 +46,13 @@ import type {
 } from '../quotaPoolModel';
 import type { QuotaFileEntry } from '../logic';
 import type { QuotaCardState } from '../providers';
-import { headroomEvents, projectJointPool } from '../jointQuotaProjection';
+import {
+  EVENTS_AHEAD_MS,
+  SHORT_BURN_HOURS,
+  forecastJointPool,
+  headroomEvents,
+  nextHeadroomGap,
+} from '../jointQuotaProjection';
 import type { JointProjection, HeadroomEvent, HeadroomGap } from '../jointQuotaProjection';
 import styles from './QuotaPool.module.scss';
 
@@ -73,7 +78,6 @@ const POOL_PROVIDERS = [
  * The 5h pool reacts to the last hour's burn and has its own fixed range: two windows back
  * and one ahead. Days ahead its resets depend on when work starts, which nobody knows.
  */
-const SHORT_BURN_HOURS = 1;
 const SHORT_BACK_MS = 2 * SHORT_PERIOD_HOURS * HOUR_MS;
 const SHORT_AHEAD_MS = SHORT_PERIOD_HOURS * HOUR_MS;
 const BURN_WINDOWS = [1, 3, 6] as const;
@@ -431,32 +435,17 @@ export function PoolCard({
       (label === 'Claude' && shortAccounts.length !== accounts.length)
     )
       return null;
-    const shortBurn = burnRatePerHour(shortAccounts, shortHistory, SHORT_BURN_HOURS, now, true);
-    const ratio = shortPerLongPoint(accounts, history, shortHistory, now);
-    const shares = new Map(
-      accounts.map((a) => [
-        a.name,
-        shortBurn > 0
-          ? burnRatePerHour(
-              shortAccounts.filter((s) => s.name === a.name),
-              shortHistory,
-              1,
-              now,
-              true
-            )
-          : burnRatePerHour([a], history, 24, now),
-      ])
-    );
-    return projectJointPool(
-      headroomAccounts(accounts, history, now),
-      headroomAccounts(shortAccounts, shortHistory, now),
-      projectedRate(profile, burn, burnWindow, now),
-      reactiveRate(profile, ratio, shortBurn, SHORT_BURN_HOURS, now),
-      shares,
+    return forecastJointPool({
+      accounts,
+      shortAccounts,
+      history,
+      shortHistory,
+      profile,
+      burn,
+      burnWindow,
       now,
-      projectionEnd,
-      profile !== null
-    );
+      end: projectionEnd,
+    });
   }, [
     accounts,
     totalAccounts,
@@ -578,7 +567,13 @@ export function PoolCard({
         <span className={styles.legendProjected}>Projected</span>
         {joint && <span className={styles.headroomLegend}>{t('quota_headroom.gap')}</span>}
       </footer>
-      {events && <HeadroomEvents events={events} accounts={accounts} />}
+      {events && (
+        <HeadroomEvents
+          events={events}
+          next={joint ? nextHeadroomGap(joint.gaps, now + EVENTS_AHEAD_MS) : null}
+          accounts={accounts}
+        />
+      )}
 
       {shortAccounts.length > 0 && (
         <ShortPool
@@ -610,9 +605,6 @@ export function PoolCard({
   );
 }
 
-/** How far ahead the list of gaps looks: one full round of weekly resets. */
-const EVENTS_AHEAD_MS = 7 * DAY_MS;
-
 const formatDay = (ms: number) =>
   `${WEEKDAYS[new Date(ms).getDay()]} ${new Date(ms).toLocaleDateString(undefined, {
     month: 'short',
@@ -623,7 +615,19 @@ const formatDay = (ms: number) =>
  * The expected periods without safe headroom in the coming week: when, how long, how
  * much of that in working hours, and which limit holds each seat back.
  */
-function HeadroomEvents({ events, accounts }: { events: HeadroomEvent[]; accounts: PoolAccount[] }) {
+export function HeadroomEvents({
+  events,
+  next = null,
+  accounts,
+  title = true,
+}: {
+  events: HeadroomEvent[];
+  /** When the first gap after the listed week starts, if the projection sees one. */
+  next?: number | null;
+  accounts: PoolAccount[];
+  /** Off where the surrounding section already carries the heading. */
+  title?: boolean;
+}) {
   const { t } = useTranslation();
   const nameOf = (name: string) =>
     accounts.find((account) => account.name === name)?.displayName ?? name;
@@ -631,7 +635,7 @@ function HeadroomEvents({ events, accounts }: { events: HeadroomEvent[]; account
   const working = events.reduce((sum, event) => sum + event.workingMs, 0);
   return (
     <section className={styles.events}>
-      <div className={styles.eventsTitle}>{t('quota_headroom.events_title')}</div>
+      {title && <div className={styles.eventsTitle}>{t('quota_headroom.events_title')}</div>}
       {events.length === 0 ? (
         <p className={styles.note}>{t('quota_headroom.events_none')}</p>
       ) : (
@@ -682,6 +686,11 @@ function HeadroomEvents({ events, accounts }: { events: HeadroomEvent[]; account
             })}
           </p>
         </>
+      )}
+      {next !== null && (
+        <p className={styles.note}>
+          {t('quota_headroom.events_next', { when: `${formatDay(next)} ${formatHour(next)}` })}
+        </p>
       )}
     </section>
   );

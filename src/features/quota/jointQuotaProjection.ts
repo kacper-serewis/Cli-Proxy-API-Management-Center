@@ -1,5 +1,22 @@
-import type { PoolAccount, PoolProjection } from './quotaPoolModel';
-import { HOUR_MS } from '@/utils/time/durations';
+import {
+  accountFromHistory,
+  burnRatePerHour,
+  headroomAccounts,
+  historyByAccount,
+  learnUsageProfile,
+  projectedRate,
+  reactiveRate,
+  shortAccountFromHistory,
+  shortPerLongPoint,
+  shortWindowHistory,
+} from './quotaPoolModel';
+import type {
+  PoolAccount,
+  PoolHistoryPoint,
+  PoolProjection,
+  UsageProfile,
+} from './quotaPoolModel';
+import { DAY_MS, HOUR_MS } from '@/utils/time/durations';
 
 // Keep in step with selector_soonest_reset.go and CliproxyBarCore/JointProjection.swift.
 export const SHORT_HEADROOM_LIMIT = 90;
@@ -237,4 +254,111 @@ export function projectJointPool(
     record(t);
   }
   return result;
+}
+
+/** The 5h burn is measured over the last hour. */
+export const SHORT_BURN_HOURS = 1;
+
+/**
+ * The joint forecast for a pool from its accounts and history: the weekly rhythm nudged by
+ * the recent pace, the 5h rate leaning on the last hour, and each seat's share of the work
+ * from what it is burning now.
+ */
+export function forecastJointPool(input: {
+  accounts: PoolAccount[];
+  shortAccounts: PoolAccount[];
+  history: Map<string, PoolHistoryPoint[]>;
+  shortHistory: Map<string, PoolHistoryPoint[]>;
+  profile: UsageProfile | null;
+  /** Weekly burn over the last `burnWindow` hours. */
+  burn: number;
+  burnWindow: number;
+  now: number;
+  end: number;
+}): JointProjection {
+  const { accounts, shortAccounts, history, shortHistory, profile, burn, burnWindow, now } = input;
+  const shortBurn = burnRatePerHour(shortAccounts, shortHistory, SHORT_BURN_HOURS, now, true);
+  const ratio = shortPerLongPoint(accounts, history, shortHistory, now);
+  const shares = new Map(
+    accounts.map((a) => [
+      a.name,
+      shortBurn > 0
+        ? burnRatePerHour(
+            shortAccounts.filter((s) => s.name === a.name),
+            shortHistory,
+            1,
+            now,
+            true
+          )
+        : burnRatePerHour([a], history, 24, now),
+    ])
+  );
+  return projectJointPool(
+    headroomAccounts(accounts, history, now),
+    headroomAccounts(shortAccounts, shortHistory, now),
+    projectedRate(profile, burn, burnWindow, now),
+    reactiveRate(profile, ratio, shortBurn, SHORT_BURN_HOURS, now),
+    shares,
+    now,
+    input.end,
+    profile !== null
+  );
+}
+
+/** How far ahead the list of gaps looks: one full round of weekly resets. */
+export const EVENTS_AHEAD_MS = 7 * DAY_MS;
+
+/**
+ * The expected gaps for a provider's pool from the quota history alone, for places that
+ * do not load the live quota cards (the dashboard). `names` are the pool's credentials;
+ * null when one of them has no history yet.
+ */
+export function headroomOutlook(
+  points: PoolHistoryPoint[],
+  names: string[],
+  displayNameFor: (name: string) => string,
+  burnWindow: number,
+  now: number
+): { events: HeadroomEvent[]; next: number | null; accounts: PoolAccount[] } | null {
+  if (names.length === 0) return null;
+  const history = historyByAccount(points);
+  const shortHistory = shortWindowHistory(history);
+  const present = <T,>(value: T | null): value is T => value !== null;
+  const accounts = names
+    .map((name) => accountFromHistory(name, displayNameFor(name), history.get(name), now))
+    .filter(present);
+  if (accounts.length !== names.length) return null;
+  // A pool without 5h windows (Codex) is forecast on its week alone.
+  const hasShort = names.some((name) => history.get(name)?.some((point) => point.short_reset));
+  const shortAccounts = hasShort
+    ? names
+        .map((name) =>
+          shortAccountFromHistory(name, displayNameFor(name), shortHistory.get(name), now)
+        )
+        .filter(present)
+    : [];
+  const provider = history.get(names[0])?.[0]?.provider;
+  const shape = [...history.values()].filter((list) => list[0].provider === provider);
+  const end = now + 2 * EVENTS_AHEAD_MS;
+  const joint = forecastJointPool({
+    accounts,
+    shortAccounts,
+    history,
+    shortHistory,
+    profile: learnUsageProfile(shape, accounts, history, now),
+    burn: burnRatePerHour(accounts, history, burnWindow, now),
+    burnWindow,
+    now,
+    end,
+  });
+  return {
+    events: headroomEvents(joint.gaps, now, now + EVENTS_AHEAD_MS, end),
+    next: nextHeadroomGap(joint.gaps, now + EVENTS_AHEAD_MS),
+    accounts,
+  };
+}
+
+/** When the first gap after the listed ones starts, as far as the projection reaches. */
+export function nextHeadroomGap(gaps: HeadroomGap[], after: number): number | null {
+  return gaps.find((gap) => gap.start >= after)?.start ?? null;
 }

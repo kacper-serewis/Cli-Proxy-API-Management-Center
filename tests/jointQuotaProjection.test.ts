@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   headroomEvents,
+  headroomOutlook,
   projectJointPool,
   workingTime,
 } from '../src/features/quota/jointQuotaProjection';
@@ -323,4 +324,32 @@ test('pool card shows the Fable-only weekly window and the seats that are out of
   expect(html).toMatch(/Seats out of Fable<\/dt><dd>a until /);
   expect(html).not.toContain('NaN');
   expect(card([])).not.toContain('Fable week');
+});
+
+test('the dashboard outlook lists the same gaps from the quota history alone', () => {
+  // Seat a has used its week and resets in five hours; seat b burns 20 points an hour in a
+  // 5h window that is at 80% and resets in two hours: no safe seat from 30 minutes in.
+  const points = [
+    { t: now / 1000 - 3600, auth: 'a', provider: 'claude', long_used: 0.99, long_reset: (now + 5 * HOUR) / 1000 },
+    { t: now / 1000, auth: 'a', provider: 'claude', long_used: 0.99, long_reset: (now + 5 * HOUR) / 1000 },
+    { t: now / 1000 - 3600, auth: 'b', provider: 'claude', long_used: 0.64, long_reset: (now + 72 * HOUR) / 1000,
+      short_used: 0.6, short_reset: (now + 2 * HOUR) / 1000 },
+    { t: now / 1000, auth: 'b', provider: 'claude', long_used: 0.65, long_reset: (now + 72 * HOUR) / 1000,
+      short_used: 0.8, short_reset: (now + 2 * HOUR) / 1000 },
+  ];
+  const outlook = headroomOutlook(points, ['a', 'b'], (name) => name.toUpperCase(), 1, now)!;
+  expect(outlook.accounts.map((account) => account.displayName)).toEqual(['A', 'B']);
+  const first = outlook.events[0];
+  expect(first.start).toBeCloseTo(now + 0.5 * HOUR, 3);
+  expect(first.end).toBe(now + 2 * HOUR);
+  expect(first.blocked).toEqual([
+    { name: 'a', limit: 'long' },
+    { name: 'b', limit: 'short' },
+  ]);
+  // Gaps past the listed week are only announced.
+  expect(outlook.events.every((event) => event.start < now + 7 * 24 * HOUR)).toBe(true);
+  expect(outlook.next === null || outlook.next >= now + 7 * 24 * HOUR).toBe(true);
+  // A credential without history yet, or an empty pool, gives no outlook instead of a wrong one.
+  expect(headroomOutlook(points, ['a', 'b', 'c'], (name) => name, 1, now)).toBeNull();
+  expect(headroomOutlook(points, [], (name) => name, 1, now)).toBeNull();
 });

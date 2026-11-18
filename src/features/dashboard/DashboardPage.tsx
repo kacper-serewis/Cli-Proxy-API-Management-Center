@@ -18,6 +18,7 @@ import { Meter } from './components/Meter';
 import { Sparkline } from './components/Sparkline';
 import { ThroughputChart } from './components/ThroughputChart';
 import { useCountUp, useRevealGroup, useRevealOnScroll } from '@/hooks/motion';
+import { HeadroomOutlook } from '@/features/quota/components/HeadroomOutlook';
 import { providerLabel, splitWindowMinutes, toneForSuccessRate, type MeterTone } from './utils';
 import styles from './dashboard.module.scss';
 
@@ -336,6 +337,18 @@ export function DashboardPage() {
             <span className={styles.statHint}>{tile.hint}</span>
           </article>
         ))}
+      </section>
+
+      {/* ---------- Quota headroom (fork): expected periods without safe headroom ---------- */}
+      <section className={styles.section}>
+        <header className={styles.sectionHead}>
+          <span className={styles.eyebrow}>{t('quota_headroom.dashboard_eyebrow')}</span>
+          <h2 className={styles.sectionTitle}>{t('quota_headroom.events_title')}</h2>
+          <p className={styles.sectionDescription}>{t('quota_headroom.dashboard_description')}</p>
+        </header>
+        <div className={styles.panel}>
+          <HeadroomOutlook />
+        </div>
       </section>
 
       {/* ---------- Traffic ---------- */}
