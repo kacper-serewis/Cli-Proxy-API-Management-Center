@@ -596,7 +596,9 @@ export function fableWindowHistory(
       .map((point) => ({
         ...point,
         long_used: point.fable_used ?? 0,
-        long_reset: point.fable_reset ?? 0,
+        // The usage poll reports this reset a second early or late; resets fall on whole
+        // minutes, and a jittering reset would read as a new window each time.
+        long_reset: Math.round((point.fable_reset ?? 0) / 60) * 60,
       }));
     if (fable.length > 0) out.set(name, fable);
   }

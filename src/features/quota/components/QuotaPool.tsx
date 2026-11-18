@@ -642,10 +642,20 @@ function FablePool({
 }: FablePoolProps) {
   const capacity = accounts.length * 100;
   const remaining = accounts.reduce((sum, account) => sum + account.remaining, 0);
-  const burn = useMemo(
-    () => burnRatePerHour(accounts, fableHistory, burnWindow, now),
-    [accounts, fableHistory, burnWindow, now]
-  );
+  // While the window has been recorded for less than the burn window, measure over what
+  // there is: dividing a first hour of usage by six would hide it.
+  const burn = useMemo(() => {
+    const first = Math.min(
+      ...accounts.map((account) => fableHistory.get(account.name)?.[0]?.t ?? Infinity)
+    );
+    const recordedHours = Number.isFinite(first) ? (now - first * 1000) / HOUR_MS : burnWindow;
+    return burnRatePerHour(
+      accounts,
+      fableHistory,
+      Math.min(burnWindow, Math.max(0.5, recordedHours)),
+      now
+    );
+  }, [accounts, fableHistory, burnWindow, now]);
   const pointsPerWeeklyPoint = useMemo(
     () => fablePerLongPoint(longAccounts, history, fableHistory, now),
     [longAccounts, history, fableHistory, now]

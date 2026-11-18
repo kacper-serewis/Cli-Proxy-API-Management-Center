@@ -390,7 +390,8 @@ describe('Fable week', () => {
     withFable(24, 0.2),
     withFable(12, 0.4),
     withFable(6, 0.5, 0.8),
-    withFable(3, 0.52, 0.84),
+    // The usage poll reports the same reset a second early now and then.
+    { ...withFable(3, 0.52, 0.84), fable_reset: sec(reset) - 1 },
     withFable(0, 0.54, 0.88),
     point('b', 6, 0.1, reset),
   ]);
