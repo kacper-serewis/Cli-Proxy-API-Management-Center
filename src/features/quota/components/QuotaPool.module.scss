@@ -362,3 +362,35 @@
     font-size: 11px;
   }
 }
+
+.events {
+  margin-top: $spacing-md;
+}
+
+.eventsTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.eventsTable {
+  width: 100%;
+  margin-top: 6px;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+
+  th {
+    padding: 4px 12px 4px 0;
+    text-align: left;
+    font-weight: 500;
+    color: var(--text-tertiary);
+  }
+
+  td {
+    padding: 4px 12px 4px 0;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    vertical-align: top;
+  }
+}

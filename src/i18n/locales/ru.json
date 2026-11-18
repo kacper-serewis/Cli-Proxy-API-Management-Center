@@ -2548,6 +2548,16 @@
     "none": "Not by {{date}}",
     "next_five": "Not in the next 5h",
     "gap": "No safe headroom",
+    "events_title": "No safe headroom, next 7 days",
+    "events_none": "None expected in the next 7 days.",
+    "events_when": "When",
+    "events_length": "Length",
+    "events_working": "In working hours",
+    "events_cause": "Held back by",
+    "events_at_least": "at least",
+    "events_week": "week full",
+    "events_five_hour": "5 hours full",
+    "events_total": "Total {{total}}, of which {{working}} in working hours (weekdays 9:30 to 17:30). Counted from now on; the projection follows the learned rhythm, so times shift as the day goes.",
     "scenario": "The projection spends each account’s 5-hour and weekly quota together, following the learned rhythm and current workload shares. The last 15% of a week is kept for when the other account is full, until the usage expected before its reset is needed to finish it. Red bands mark periods with no safe seat; fallback quota may still work. Work pauses during these periods and resumes after a reset."
   }
 }

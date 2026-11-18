@@ -18,6 +18,65 @@ const EPS = 1e-8;
 export interface HeadroomGap {
   start: number;
   end: number | null;
+  /** Which limit keeps each seat from taking work when the gap starts. */
+  blocked?: { name: string; limit: 'short' | 'long' }[];
+}
+
+/** One expected period without safe headroom, for the list under the chart. */
+export interface HeadroomEvent {
+  start: number;
+  /** When headroom returns; the end of the projection when it does not within it. */
+  end: number;
+  /** False when headroom does not return within the projection: it lasts at least this long. */
+  ended: boolean;
+  /** How much of it falls in working hours. */
+  workingMs: number;
+  blocked: { name: string; limit: 'short' | 'long' }[];
+}
+
+/** Working hours, local time on weekdays: where a gap hurts. */
+export const WORK_START_MINUTES = 9 * 60 + 30;
+export const WORK_END_MINUTES = 17 * 60 + 30;
+
+/** The part of a period that falls in working hours. */
+export function workingTime(start: number, end: number): number {
+  let total = 0;
+  const day = new Date(start);
+  day.setHours(0, 0, 0, 0);
+  while (day.getTime() < end) {
+    if (day.getDay() >= 1 && day.getDay() <= 5) {
+      const from = new Date(day).setHours(0, WORK_START_MINUTES, 0, 0);
+      const to = new Date(day).setHours(0, WORK_END_MINUTES, 0, 0);
+      total += Math.max(0, Math.min(end, to) - Math.max(start, from));
+    }
+    day.setDate(day.getDate() + 1);
+  }
+  return total;
+}
+
+/**
+ * The gaps that are going on or start before `until`, each with its length. A gap that
+ * began earlier counts from `now`; one without an end runs to `projectionEnd`.
+ */
+export function headroomEvents(
+  gaps: HeadroomGap[],
+  now: number,
+  until: number,
+  projectionEnd: number
+): HeadroomEvent[] {
+  return gaps
+    .filter((gap) => gap.start < until && (gap.end === null || gap.end > now))
+    .map((gap) => {
+      const start = Math.max(gap.start, now);
+      const end = gap.end ?? Math.max(projectionEnd, start);
+      return {
+        start,
+        end,
+        ended: gap.end !== null,
+        workingMs: workingTime(start, end),
+        blocked: gap.blocked ?? [],
+      };
+    });
 }
 export interface JointProjection {
   long: PoolProjection;
@@ -46,6 +105,7 @@ export function projectJointPool(
   const state = longAccounts.map((long) => {
     const short = shortAccounts.find((a) => a.name === long.name);
     return {
+      name: long.name,
       longUsed: 100 - long.remaining,
       shortUsed: short ? 100 - short.remaining : null,
       longReset: long.resetAtMs ?? Infinity,
@@ -131,7 +191,14 @@ export function projectJointPool(
     const nextReset = Math.min(...state.flatMap((a) => [a.longReset, a.shortReset]));
     if (order.length === 0) {
       if (!result.gaps.length || result.gaps[result.gaps.length - 1].end !== null)
-        result.gaps.push({ start: t, end: null });
+        result.gaps.push({
+          start: t,
+          end: null,
+          blocked: state.map((a) => ({
+            name: a.name,
+            limit: a.longUsed >= LONG_HEADROOM_LIMIT - EPS ? 'long' : 'short',
+          })),
+        });
       t = Math.min(end, nextReset);
       record(t);
       continue;

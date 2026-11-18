@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { projectJointPool } from '../src/features/quota/jointQuotaProjection';
+import {
+  headroomEvents,
+  projectJointPool,
+  workingTime,
+} from '../src/features/quota/jointQuotaProjection';
 import {
   headroomAccounts,
   historyByAccount,
@@ -74,7 +78,16 @@ describe('joint quota forecast (same cases as CliproxyBar)', () => {
       now,
       now + 4 * HOUR
     );
-    expect(result.gaps).toEqual([{ start: now, end: now + 2 * HOUR }]);
+    expect(result.gaps).toEqual([
+      {
+        start: now,
+        end: now + 2 * HOUR,
+        blocked: [
+          { name: 'a', limit: 'long' },
+          { name: 'b', limit: 'short' },
+        ],
+      },
+    ]);
   });
 
   test('idle short windows begin on first use and stay idle without work', () => {
@@ -199,6 +212,36 @@ describe('joint quota forecast (same cases as CliproxyBar)', () => {
     expect(blind.short.resets[0].gain).toBeCloseTo(45, 6);
   });
 
+  test('lists the expected gaps with their length and their share of working hours', () => {
+    // Local time: Wednesday 18 November 2026, working hours 9:30 to 17:30 on weekdays.
+    const at = (day: number, hour: number, minute = 0) =>
+      new Date(2026, 10, day, hour, minute).getTime();
+    expect(workingTime(at(18, 16), at(18, 19))).toBe(1.5 * HOUR);
+    expect(workingTime(at(18, 18), at(19, 10))).toBe(0.5 * HOUR);
+    expect(workingTime(at(20, 17), at(23, 10))).toBe(HOUR); // Friday into Monday
+    expect(workingTime(at(21, 9), at(22, 20))).toBe(0); // a weekend
+
+    const start = at(18, 12);
+    const events = headroomEvents(
+      [
+        { start: at(18, 9), end: at(18, 11) }, // over
+        { start: at(18, 11), end: at(18, 13), blocked: [{ name: 'a', limit: 'short' }] },
+        { start: at(19, 17), end: at(19, 18) },
+        { start: at(24, 20), end: null },
+        { start: at(26, 9), end: at(26, 10) }, // starts after the list ends
+      ],
+      start,
+      at(25, 12),
+      at(27, 12)
+    );
+    expect(events.map((e) => [e.start, e.end, e.ended, e.workingMs])).toEqual([
+      [start, at(18, 13), true, HOUR], // counted from now on
+      [at(19, 17), at(19, 18), true, 0.5 * HOUR],
+      [at(24, 20), at(27, 12), false, 2 * 8 * HOUR + 2.5 * HOUR],
+    ]);
+    expect(events[0].blocked).toEqual([{ name: 'a', limit: 'short' }]);
+  });
+
   test('readings retain their high water only within the current window', () => {
     const history = historyByAccount([
       {
@@ -250,6 +293,9 @@ test('pool card renders headroom loss, recovery, and bands on both joint charts'
   expect(html).toContain('Headroom returns');
   expect(html.match(/<rect /g)!.length).toBeGreaterThanOrEqual(2);
   expect(html).toContain('No safe headroom');
+  expect(html).toContain('No safe headroom, next 7 days');
+  expect(html).toMatch(/<td>30m<\/td>/);
+  expect(html).toContain('a: week full, b: 5 hours full');
   expect(html).not.toContain('Pool empty');
   expect(html).not.toContain('NaN');
 });

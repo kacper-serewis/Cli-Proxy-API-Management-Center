@@ -47,8 +47,8 @@ import type {
 } from '../quotaPoolModel';
 import type { QuotaFileEntry } from '../logic';
 import type { QuotaCardState } from '../providers';
-import { projectJointPool } from '../jointQuotaProjection';
-import type { JointProjection, HeadroomGap } from '../jointQuotaProjection';
+import { headroomEvents, projectJointPool } from '../jointQuotaProjection';
+import type { JointProjection, HeadroomEvent, HeadroomGap } from '../jointQuotaProjection';
 import styles from './QuotaPool.module.scss';
 
 const POOL_PROVIDERS = [
@@ -476,6 +476,10 @@ export function PoolCard({
   );
   const projection = joint?.long ?? independent;
   const gap = joint?.gaps[0];
+  const events = useMemo(
+    () => (joint ? headroomEvents(joint.gaps, now, now + EVENTS_AHEAD_MS, projectionEnd) : null),
+    [joint, now, projectionEnd]
+  );
   const nextReset = projection.resets[0] ?? null;
 
   const stats = [
@@ -574,6 +578,7 @@ export function PoolCard({
         <span className={styles.legendProjected}>Projected</span>
         {joint && <span className={styles.headroomLegend}>{t('quota_headroom.gap')}</span>}
       </footer>
+      {events && <HeadroomEvents events={events} accounts={accounts} />}
 
       {shortAccounts.length > 0 && (
         <ShortPool
@@ -602,6 +607,83 @@ export function PoolCard({
         />
       )}
     </article>
+  );
+}
+
+/** How far ahead the list of gaps looks: one full round of weekly resets. */
+const EVENTS_AHEAD_MS = 7 * DAY_MS;
+
+const formatDay = (ms: number) =>
+  `${WEEKDAYS[new Date(ms).getDay()]} ${new Date(ms).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  })}`;
+
+/**
+ * The expected periods without safe headroom in the coming week: when, how long, how
+ * much of that in working hours, and which limit holds each seat back.
+ */
+function HeadroomEvents({ events, accounts }: { events: HeadroomEvent[]; accounts: PoolAccount[] }) {
+  const { t } = useTranslation();
+  const nameOf = (name: string) =>
+    accounts.find((account) => account.name === name)?.displayName ?? name;
+  const total = events.reduce((sum, event) => sum + event.end - event.start, 0);
+  const working = events.reduce((sum, event) => sum + event.workingMs, 0);
+  return (
+    <section className={styles.events}>
+      <div className={styles.eventsTitle}>{t('quota_headroom.events_title')}</div>
+      {events.length === 0 ? (
+        <p className={styles.note}>{t('quota_headroom.events_none')}</p>
+      ) : (
+        <>
+          <table className={styles.eventsTable}>
+            <thead>
+              <tr>
+                <th>{t('quota_headroom.events_when')}</th>
+                <th>{t('quota_headroom.events_length')}</th>
+                <th>{t('quota_headroom.events_working')}</th>
+                <th>{t('quota_headroom.events_cause')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((event) => (
+                <tr key={event.start}>
+                  <td>
+                    {formatDay(event.start)} {formatHour(event.start)} –{' '}
+                    {formatDay(event.end) === formatDay(event.start)
+                      ? formatHour(event.end)
+                      : `${formatDay(event.end)} ${formatHour(event.end)}`}
+                  </td>
+                  <td>
+                    {event.ended ? '' : `${t('quota_headroom.events_at_least')} `}
+                    {formatDuration(event.end - event.start)}
+                  </td>
+                  <td>{event.workingMs > 0 ? formatDuration(event.workingMs) : '—'}</td>
+                  <td>
+                    {event.blocked
+                      .map(
+                        (seat) =>
+                          `${nameOf(seat.name)}: ${t(
+                            seat.limit === 'long'
+                              ? 'quota_headroom.events_week'
+                              : 'quota_headroom.events_five_hour'
+                          )}`
+                      )
+                      .join(', ')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className={styles.note}>
+            {t('quota_headroom.events_total', {
+              total: formatDuration(total),
+              working: formatDuration(working),
+            })}
+          </p>
+        </>
+      )}
+    </section>
   );
 }
 
