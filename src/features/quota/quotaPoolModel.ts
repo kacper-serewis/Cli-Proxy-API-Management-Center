@@ -22,6 +22,9 @@ export interface PoolHistoryPoint {
   long_reset: number;
   short_used?: number;
   short_reset?: number;
+  /** Claude's Fable-only weekly window; a reset without a usage value means nothing used. */
+  fable_used?: number;
+  fable_reset?: number;
 }
 
 export interface PoolAccount {
@@ -576,6 +579,56 @@ export function shortAccountFromHistory(
     periodHours: SHORT_PERIOD_HOURS,
     startsOnUse: true,
   };
+}
+
+/**
+ * The Fable-only weekly window as pool history: the points that report it, with usage and
+ * reset taken from that window, so the pool functions above work on it. Each seat has one
+ * next to its week; a seat that is out of it still serves other models.
+ */
+export function fableWindowHistory(
+  history: Map<string, PoolHistoryPoint[]>
+): Map<string, PoolHistoryPoint[]> {
+  const out = new Map<string, PoolHistoryPoint[]>();
+  for (const [name, points] of history) {
+    const fable = points
+      .filter((point) => point.fable_reset)
+      .map((point) => ({
+        ...point,
+        long_used: point.fable_used ?? 0,
+        long_reset: point.fable_reset ?? 0,
+      }));
+    if (fable.length > 0) out.set(name, fable);
+  }
+  return out;
+}
+
+/**
+ * How many Fable-window points one weekly point costs, from what the pool's credentials
+ * burned in both windows since the Fable window is recorded. It follows the mix of models
+ * in use and turns the weekly rhythm into Fable points.
+ */
+export function fablePerLongPoint(
+  accounts: PoolAccount[],
+  history: Map<string, PoolHistoryPoint[]>,
+  fableHistory: Map<string, PoolHistoryPoint[]>,
+  now: number
+): number | null {
+  let long = 0;
+  let fable = 0;
+  for (const account of accounts) {
+    const points = fableHistory.get(account.name);
+    if (!points?.length) continue;
+    const since = Math.max(points[0].t * 1000, now - LEVEL_WINDOW_MS);
+    const total = (source: PoolHistoryPoint[]) =>
+      usageEvents(source.filter((point) => point.t * 1000 >= since))
+        .filter(([t]) => t <= now)
+        .reduce((sum, [, amount]) => sum + amount, 0);
+    long += total(history.get(account.name) ?? []);
+    fable += total(points);
+  }
+  // A couple of weekly points is too coarse to divide by.
+  return long >= 3 && fable > 0 ? fable / long : null;
 }
 
 /**

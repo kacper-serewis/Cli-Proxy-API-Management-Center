@@ -111,7 +111,8 @@ export function QuotaAccounts({
               {SHORT_SATURATION * 100}% of its 5-hour window. At {SHORT_DRAIN * 100}%, chats move to
               another account. The last {Math.round((LONG_SATURATION - LONG_RESERVE) * 100)}% of a
               week is kept for when the other account is full, until the usage expected before its
-              reset is needed to finish it.
+              reset is needed to finish it. Fable has a weekly limit of its own on each account;
+              new Fable chats skip an account that is out of it.
             </>
           )}
         </span>
@@ -161,6 +162,17 @@ function AccountLine({
         : undefined;
   const longUsed =
     adaptive?.long?.used ?? (longReset !== undefined && longReset <= now ? 0 : point?.long_used);
+  // The Fable-only weekly window: the routing queue has the newest reading, the history
+  // the last recorded one.
+  const queueFableReset = row.candidate?.fable_reset ? Date.parse(row.candidate.fable_reset) : NaN;
+  const fable =
+    queueFableReset > now
+      ? { used: row.candidate?.fable_usage ?? 0, reset: queueFableReset }
+      : point?.fable_reset && point.fable_reset * 1000 > now
+        ? { used: point.fable_used ?? 0, reset: point.fable_reset * 1000 }
+        : undefined;
+  const fableOut =
+    fable !== undefined && (row.candidate?.fable_saturated || fable.used >= LONG_SATURATION);
 
   const status = adaptive
     ? {
@@ -228,11 +240,28 @@ function AccountLine({
               : undefined
         }
       />
+      {fable ? (
+        <Meter
+          label="Fable week"
+          used={fable.used}
+          warnAt={LONG_RESERVE}
+          badAt={LONG_SATURATION}
+          marks={[LONG_RESERVE]}
+          caption={`resets ${formatInstant(fable.reset)}`}
+        />
+      ) : (
+        <div className={styles.meter} aria-hidden="true" />
+      )}
 
       <div className={styles.state}>
         <span className={styles.status} data-tone={status.tone}>
           {status.label}
         </span>
+        {fableOut && fable && (
+          <span className={styles.status} data-tone="warn">
+            No Fable until {formatInstant(fable.reset)}
+          </span>
+        )}
         <span className={styles.chats}>{chatText}</span>
       </div>
       {adaptive && <AdaptiveReason decision={adaptive} now={now} />}

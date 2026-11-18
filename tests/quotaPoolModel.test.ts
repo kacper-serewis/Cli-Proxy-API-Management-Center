@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   accountFromHistory,
   burnRatePerHour,
+  fablePerLongPoint,
+  fableWindowHistory,
   historyByAccount,
   mergeResetLabels,
   learnUsageProfile,
@@ -373,5 +375,44 @@ describe('5h pool', () => {
     // Nothing learned: the constant recent rate.
     expect(reactiveRate(null, 8, 5, 1, learnedAt)(at(12, 3))).toBe(5);
     expect(reactiveRate(profile, null, 5, 1, learnedAt)(at(12, 3))).toBe(5);
+  });
+});
+
+describe('Fable week', () => {
+  const reset = now + 48 * HOUR;
+  // The week is recorded for a day; the Fable window only for the last six hours, in
+  // which the week went up 4 points and the Fable window 8.
+  const withFable = (hoursAgo: number, used: number, fableUsed?: number): PoolHistoryPoint => ({
+    ...point('a', hoursAgo, used, reset),
+    ...(fableUsed === undefined ? {} : { fable_used: fableUsed, fable_reset: sec(reset) }),
+  });
+  const history = historyByAccount([
+    withFable(24, 0.2),
+    withFable(12, 0.4),
+    withFable(6, 0.5, 0.8),
+    withFable(3, 0.52, 0.84),
+    withFable(0, 0.54, 0.88),
+    point('b', 6, 0.1, reset),
+  ]);
+  const fable = fableWindowHistory(history);
+
+  test('reads the Fable window from the points that report it', () => {
+    expect([...fable.keys()]).toEqual(['a']);
+    expect(fable.get('a')!.map((p) => p.long_used)).toEqual([0.8, 0.84, 0.88]);
+    const state = accountFromHistory('a', 'a', fable.get('a'), now)!;
+    expect(state.remaining).toBeCloseTo(12, 6);
+    expect(state.resetAtMs).toBe(sec(reset) * 1000);
+    // After its reset the window is full again and the next reset is a week on.
+    const later = accountFromHistory('a', 'a', fable.get('a'), reset + HOUR)!;
+    expect(later.remaining).toBe(100);
+    expect(later.resetAtMs).toBe(sec(reset) * 1000 + 168 * HOUR);
+  });
+
+  test('learns what a weekly point costs in Fable points since the window is recorded', () => {
+    const accounts = [account('a', 46, 48), account('b', 90, 48)];
+    expect(fablePerLongPoint(accounts, history, fable, now)).toBeCloseTo(2, 6);
+    // Too little weekly usage to divide by.
+    expect(fablePerLongPoint(accounts, history, fable, now - 2 * HOUR)).toBeNull();
+    expect(fablePerLongPoint([account('b', 90, 48)], history, fable, now)).toBeNull();
   });
 });

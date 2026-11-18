@@ -17,6 +17,8 @@ import type { ResolvedTheme } from '@/types';
 import {
   accountFromHistory,
   burnRatePerHour,
+  fablePerLongPoint,
+  fableWindowHistory,
   historyByAccount,
   headroomAccounts,
   learnUsageProfile,
@@ -50,7 +52,13 @@ import type { JointProjection, HeadroomGap } from '../jointQuotaProjection';
 import styles from './QuotaPool.module.scss';
 
 const POOL_PROVIDERS = [
-  { type: 'claude', label: 'Claude', windowIds: ['seven-day'], shortWindowIds: ['five-hour'] },
+  {
+    type: 'claude',
+    label: 'Claude',
+    windowIds: ['seven-day'],
+    shortWindowIds: ['five-hour'],
+    fableWindowIds: ['seven-day-fable'],
+  },
   // Which slot carries the weekly limit depends on the plan; take the longest. No 5h pool:
   // the same slot may be the weekly one.
   {
@@ -58,6 +66,7 @@ const POOL_PROVIDERS = [
     label: 'Codex',
     windowIds: ['five-hour', 'weekly', 'monthly'],
     shortWindowIds: [],
+    fableWindowIds: [],
   },
 ] as const;
 /**
@@ -194,6 +203,7 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
 
   const history = useMemo(() => historyByAccount(points), [points]);
   const shortHistory = useMemo(() => shortWindowHistory(history), [history]);
+  const fableHistory = useMemo(() => fableWindowHistory(history), [history]);
 
   // Now sits where the recorded span ends and the projected one begins.
   const startMs = now - view.spanMs;
@@ -247,9 +257,39 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
                   );
                 })
                 .filter((account): account is PoolAccount => account !== null);
-        return { ...provider, total: providerEntries.length, accounts, shortAccounts };
+        // The Fable-only weekly window, for the seats that report one.
+        const fableAccounts =
+          provider.fableWindowIds.length === 0
+            ? []
+            : providerEntries
+                .map((entry) => {
+                  const displayName = displayNameFor(entry.file.name);
+                  return (
+                    liveAccount(
+                      entry,
+                      quotaFor(entry),
+                      provider.fableWindowIds,
+                      displayName,
+                      now
+                    ) ??
+                    accountFromHistory(
+                      entry.file.name,
+                      displayName,
+                      fableHistory.get(entry.file.name),
+                      now
+                    )
+                  );
+                })
+                .filter((account): account is PoolAccount => account !== null);
+        return {
+          ...provider,
+          total: providerEntries.length,
+          accounts,
+          shortAccounts,
+          fableAccounts,
+        };
       }).filter((pool) => pool.total > 0),
-    [entries, quotaFor, displayNameFor, history, shortHistory, now]
+    [entries, quotaFor, displayNameFor, history, shortHistory, fableHistory, now]
   );
 
   if (pools.length === 0) return null;
@@ -315,6 +355,8 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
           accounts={pool.accounts}
           shortAccounts={pool.shortAccounts}
           shortHistory={shortHistory}
+          fableAccounts={pool.fableAccounts}
+          fableHistory={fableHistory}
           history={history}
           shapeHistory={providerHistory.get(pool.type) ?? NO_HISTORY}
           burnWindow={burnWindow}
@@ -336,6 +378,9 @@ interface PoolCardProps {
   /** The same credentials' 5h windows; empty when the provider has no 5h pool. */
   shortAccounts: PoolAccount[];
   shortHistory: Map<string, PoolHistoryPoint[]>;
+  /** The same credentials' Fable-only weekly windows; empty when none is reported. */
+  fableAccounts?: PoolAccount[];
+  fableHistory?: Map<string, PoolHistoryPoint[]>;
   history: Map<string, PoolHistoryPoint[]>;
   /** Every credential of this provider with history, in or out of the pool. */
   shapeHistory: PoolHistoryPoint[][];
@@ -353,6 +398,8 @@ export function PoolCard({
   accounts,
   shortAccounts,
   shortHistory,
+  fableAccounts = NO_ACCOUNTS,
+  fableHistory = NO_FABLE_HISTORY,
   history,
   shapeHistory,
   burnWindow,
@@ -539,7 +586,163 @@ export function PoolCard({
           now={now}
         />
       )}
+      {fableAccounts.length > 0 && (
+        <FablePool
+          accounts={fableAccounts}
+          longAccounts={accounts}
+          history={history}
+          fableHistory={fableHistory}
+          profile={profile}
+          weeklyBurn={burn}
+          burnWindow={burnWindow}
+          now={now}
+          scale={scale}
+          startMs={startMs}
+          endMs={endMs}
+        />
+      )}
     </article>
+  );
+}
+
+const NO_ACCOUNTS: PoolAccount[] = [];
+const NO_FABLE_HISTORY = new Map<string, PoolHistoryPoint[]>();
+
+interface FablePoolProps {
+  accounts: PoolAccount[];
+  longAccounts: PoolAccount[];
+  history: Map<string, PoolHistoryPoint[]>;
+  fableHistory: Map<string, PoolHistoryPoint[]>;
+  profile: UsageProfile | null;
+  weeklyBurn: number;
+  burnWindow: number;
+  now: number;
+  scale: PoolScale;
+  startMs: number;
+  endMs: number;
+}
+
+/**
+ * The pooled Fable-only weekly window under the other charts, on the weekly range. Each
+ * seat has this window next to its week, with the same reset; a seat that is out of it
+ * still serves other models, so it is not part of the headroom bands above.
+ */
+function FablePool({
+  accounts,
+  longAccounts,
+  history,
+  fableHistory,
+  profile,
+  weeklyBurn,
+  burnWindow,
+  now,
+  scale,
+  startMs,
+  endMs,
+}: FablePoolProps) {
+  const capacity = accounts.length * 100;
+  const remaining = accounts.reduce((sum, account) => sum + account.remaining, 0);
+  const burn = useMemo(
+    () => burnRatePerHour(accounts, fableHistory, burnWindow, now),
+    [accounts, fableHistory, burnWindow, now]
+  );
+  const pointsPerWeeklyPoint = useMemo(
+    () => fablePerLongPoint(longAccounts, history, fableHistory, now),
+    [longAccounts, history, fableHistory, now]
+  );
+  const learned = profile !== null && pointsPerWeeklyPoint !== null;
+  const recorded = useMemo(
+    () => recordedSeries(accounts, fableHistory, startMs, Math.min(now, endMs)),
+    [accounts, fableHistory, startMs, endMs, now]
+  );
+  const projectionEnd = Math.max(endMs, now + 14 * DAY_MS);
+  const projection = useMemo(() => {
+    const weekly = projectedRate(profile, weeklyBurn, burnWindow, now);
+    const rate =
+      profile !== null && pointsPerWeeklyPoint !== null
+        ? (t: number) => weekly(t) * pointsPerWeeklyPoint
+        : burn;
+    return projectPool(accounts, rate, now, projectionEnd);
+  }, [accounts, profile, pointsPerWeeklyPoint, weeklyBurn, burnWindow, burn, now, projectionEnd]);
+  const nextReset = projection.resets[0] ?? null;
+  const out = accounts.filter((account) => account.remaining <= 1);
+
+  const stats = [
+    {
+      label: 'Fable runs out',
+      value:
+        remaining <= accounts.length
+          ? 'Now'
+          : projection.poolEmptyAt
+            ? formatInstant(projection.poolEmptyAt)
+            : `Not by ${formatShortDate(projectionEnd)}`,
+    },
+    {
+      label: 'Seats out of Fable',
+      value:
+        out.length > 0
+          ? out
+              .map(
+                (account) =>
+                  `${account.displayName}${account.resetAtMs ? ` until ${formatInstant(account.resetAtMs)}` : ''}`
+              )
+              .join(', ')
+          : projection.firstEmpty
+            ? `${projection.firstEmpty.name} in ${formatDuration(projection.firstEmpty.t - now)}`
+            : 'None',
+    },
+    {
+      label: 'Next reset',
+      value: nextReset ? `+${formatPercent(nextReset.gain)} ${formatInstant(nextReset.t)}` : 'None',
+    },
+    {
+      label: 'Fable per weekly point',
+      value: pointsPerWeeklyPoint !== null ? `${pointsPerWeeklyPoint.toFixed(1)}×` : 'Learning',
+    },
+  ];
+
+  return (
+    <section className={styles.short}>
+      <header className={styles.cardHead}>
+        <div>
+          <div className={styles.shortTitle}>
+            Fable week <span className={styles.subtle}>Fable-only limit per seat</span>
+          </div>
+          <div className={styles.medium}>
+            {formatPercent(remaining)}
+            <span className={styles.subtle}> of {formatPercent(capacity)}</span>
+          </div>
+        </div>
+        <dl className={styles.stats}>
+          {stats.map((stat) => (
+            <div key={stat.label}>
+              <dt>{stat.label}</dt>
+              <dd>{stat.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </header>
+      <div className={styles.shortChart}>
+        <PoolChart
+          capacity={capacity}
+          recorded={recorded.series}
+          projected={projection.series}
+          resets={[...recorded.resets, ...projection.resets]}
+          poolEmptyAt={projection.poolEmptyAt}
+          now={now}
+          scale={scale}
+          startMs={startMs}
+          endMs={endMs}
+        />
+      </div>
+      <p className={styles.note}>
+        Each seat has a weekly limit for Fable alone, next to its week and with the same reset.
+        A seat that is out of it still serves other models, so new Fable chats skip it.{' '}
+        {learned
+          ? 'The projection follows the learned weekly rhythm, at what the recent mix of models costs in Fable points.'
+          : 'Until enough Fable usage is recorded, the projection holds the recent Fable burn constant.'}
+      </p>
+    </section>
   );
 }
 

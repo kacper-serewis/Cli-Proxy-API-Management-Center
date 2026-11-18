@@ -60,6 +60,11 @@ export interface RoutingCandidate {
   saturated: boolean;
   /** In its weekly reserve: new chats come here only when the other accounts are full. */
   reserved?: boolean;
+  /** The Fable-only weekly window, when the account reports one. */
+  fable_usage?: number;
+  fable_reset?: string;
+  /** Out of Fable: new Fable chats skip it, other models still go there. */
+  fable_saturated?: boolean;
   unavailable: boolean;
   retry_after?: string;
 }

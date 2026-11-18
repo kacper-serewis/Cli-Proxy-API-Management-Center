@@ -227,7 +227,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createInstance } from 'i18next';
 import { I18nextProvider } from 'react-i18next';
 import { PoolCard } from '../src/features/quota/components/QuotaPool';
-import { shortWindowHistory, viewScale } from '../src/features/quota/quotaPoolModel';
+import { fableWindowHistory, shortWindowHistory, viewScale } from '../src/features/quota/quotaPoolModel';
 import en from '../src/i18n/locales/en.json';
 
 test('pool card renders headroom loss, recovery, and bands on both joint charts', async () => {
@@ -252,4 +252,29 @@ test('pool card renders headroom loss, recovery, and bands on both joint charts'
   expect(html).toContain('No safe headroom');
   expect(html).not.toContain('Pool empty');
   expect(html).not.toContain('NaN');
+});
+
+test('pool card shows the Fable-only weekly window and the seats that are out of it', async () => {
+  const i18n = createInstance();
+  await i18n.init({ lng: 'en', resources: { en: { translation: en } }, interpolation: { escapeValue: false } });
+  const long = [seat('a', 79, 48), seat('b', 8, 150)];
+  const fable = [seat('a', 100, 48), seat('b', 16, 150)];
+  const history = historyByAccount([
+    { t: now / 1000 - 3600, auth: 'b', provider: 'claude', long_used: 0.07, long_reset: (now + 150 * HOUR) / 1000,
+      fable_used: 0.14, fable_reset: (now + 150 * HOUR) / 1000 },
+    { t: now / 1000, auth: 'b', provider: 'claude', long_used: 0.08, long_reset: (now + 150 * HOUR) / 1000,
+      fable_used: 0.16, fable_reset: (now + 150 * HOUR) / 1000 },
+  ]);
+  const card = (fableAccounts: PoolAccount[]) => renderToStaticMarkup(createElement(I18nextProvider, { i18n }, createElement(PoolCard, {
+    label: 'Claude', color: undefined, totalAccounts: 2, accounts: long, shortAccounts: [], fableAccounts,
+    history, shortHistory: shortWindowHistory(history), fableHistory: fableWindowHistory(history),
+    shapeHistory: [...history.values()], burnWindow: 1, now, scale: viewScale(6 * HOUR),
+    startMs: now - HOUR, endMs: now + 5 * HOUR,
+  })));
+  const html = card(fable);
+  expect(html).toContain('Fable week');
+  expect(html).toContain('84%');
+  expect(html).toMatch(/Seats out of Fable<\/dt><dd>a until /);
+  expect(html).not.toContain('NaN');
+  expect(card([])).not.toContain('Fable week');
 });
