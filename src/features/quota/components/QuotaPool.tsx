@@ -48,6 +48,7 @@ import type { QuotaFileEntry } from '../logic';
 import type { QuotaCardState } from '../providers';
 import {
   EVENTS_AHEAD_MS,
+  RECENT_PACE_HOURS,
   SHORT_BURN_HOURS,
   forecastJointPool,
   headroomEvents,
@@ -80,7 +81,6 @@ const POOL_PROVIDERS = [
  */
 const SHORT_BACK_MS = 2 * SHORT_PERIOD_HOURS * HOUR_MS;
 const SHORT_AHEAD_MS = SHORT_PERIOD_HOURS * HOUR_MS;
-const BURN_WINDOWS = [1, 3, 6] as const;
 /** The proxy keeps 90 days (quotaHistoryRetention); the usage rhythm is learned from all of it. */
 const HISTORY_DAYS = 90;
 const HISTORY_REFRESH_MS = 2 * 60 * 1000;
@@ -176,7 +176,6 @@ export interface QuotaPoolProps {
 
 export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: QuotaPoolProps) {
   const now = useNow();
-  const [burnWindow, setBurnWindow] = useLocalStorage<number>('quota-pool-burn-window', 3);
   const [viewId, setViewId] = useLocalStorage<string>('quota-pool-view', DEFAULT_VIEW);
   const view =
     POOL_VIEWS.find((candidate) => candidate.id === viewId) ??
@@ -231,9 +230,12 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
         const accounts = providerEntries
           .map((entry) => {
             const displayName = displayNameFor(entry.file.name);
+            // The recorded history first: it is sampled every two minutes, and it is what
+            // the dashboard and the menu bar app forecast from. Live cards fill in before
+            // an account has history.
             return (
-              liveAccount(entry, quotaFor(entry), provider.windowIds, displayName, now) ??
-              accountFromHistory(entry.file.name, displayName, history.get(entry.file.name), now)
+              accountFromHistory(entry.file.name, displayName, history.get(entry.file.name), now) ??
+              liveAccount(entry, quotaFor(entry), provider.windowIds, displayName, now)
             );
           })
           .filter((account): account is PoolAccount => account !== null);
@@ -244,6 +246,12 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
                 .map((entry) => {
                   const displayName = displayNameFor(entry.file.name);
                   return (
+                    shortAccountFromHistory(
+                      entry.file.name,
+                      displayName,
+                      shortHistory.get(entry.file.name),
+                      now
+                    ) ??
                     liveAccount(
                       entry,
                       quotaFor(entry),
@@ -251,12 +259,6 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
                       displayName,
                       now,
                       true
-                    ) ??
-                    shortAccountFromHistory(
-                      entry.file.name,
-                      displayName,
-                      shortHistory.get(entry.file.name),
-                      now
                     )
                   );
                 })
@@ -269,17 +271,17 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
                 .map((entry) => {
                   const displayName = displayNameFor(entry.file.name);
                   return (
+                    accountFromHistory(
+                      entry.file.name,
+                      displayName,
+                      fableHistory.get(entry.file.name),
+                      now
+                    ) ??
                     liveAccount(
                       entry,
                       quotaFor(entry),
                       provider.fableWindowIds,
                       displayName,
-                      now
-                    ) ??
-                    accountFromHistory(
-                      entry.file.name,
-                      displayName,
-                      fableHistory.get(entry.file.name),
                       now
                     )
                   );
@@ -301,19 +303,6 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
   return (
     <section className={styles.pool}>
       <div className={styles.controls}>
-        <span className={styles.controlLabel}>Recent pace</span>
-        <div className={styles.segmented}>
-          {BURN_WINDOWS.map((hours) => (
-            <button
-              key={hours}
-              type="button"
-              aria-pressed={burnWindow === hours}
-              onClick={() => setBurnWindow(hours)}
-            >
-              {hours}h
-            </button>
-          ))}
-        </div>
         <span className={styles.controlLabel}>Back</span>
         <div className={styles.segmented}>
           {POOL_VIEWS.map((option) => (
@@ -363,7 +352,6 @@ export function QuotaPool({ entries, quotaFor, displayNameFor, resolvedTheme }: 
           fableHistory={fableHistory}
           history={history}
           shapeHistory={providerHistory.get(pool.type) ?? NO_HISTORY}
-          burnWindow={burnWindow}
           now={now}
           scale={scale}
           startMs={startMs}
@@ -388,7 +376,6 @@ interface PoolCardProps {
   history: Map<string, PoolHistoryPoint[]>;
   /** Every credential of this provider with history, in or out of the pool. */
   shapeHistory: PoolHistoryPoint[][];
-  burnWindow: number;
   now: number;
   scale: PoolScale;
   startMs: number;
@@ -406,7 +393,6 @@ export function PoolCard({
   fableHistory = NO_FABLE_HISTORY,
   history,
   shapeHistory,
-  burnWindow,
   now,
   scale,
   startMs,
@@ -416,8 +402,8 @@ export function PoolCard({
   const capacity = accounts.length * 100;
   const remaining = accounts.reduce((sum, account) => sum + account.remaining, 0);
   const burn = useMemo(
-    () => burnRatePerHour(accounts, history, burnWindow, now),
-    [accounts, history, burnWindow, now]
+    () => burnRatePerHour(accounts, history, RECENT_PACE_HOURS, now),
+    [accounts, history, now]
   );
   const recorded = useMemo(
     () => recordedSeries(accounts, history, startMs, Math.min(now, endMs)),
@@ -441,8 +427,6 @@ export function PoolCard({
       history,
       shortHistory,
       profile,
-      burn,
-      burnWindow,
       now,
       end: projectionEnd,
     });
@@ -454,14 +438,18 @@ export function PoolCard({
     shortHistory,
     history,
     profile,
-    burn,
-    burnWindow,
     now,
     projectionEnd,
   ]);
   const independent = useMemo(
-    () => projectPool(accounts, projectedRate(profile, burn, burnWindow, now), now, projectionEnd),
-    [accounts, profile, burn, burnWindow, now, projectionEnd]
+    () =>
+      projectPool(
+        accounts,
+        projectedRate(profile, burn, RECENT_PACE_HOURS, now),
+        now,
+        projectionEnd
+      ),
+    [accounts, profile, burn, now, projectionEnd]
   );
   const projection = joint?.long ?? independent;
   const gap = joint?.gaps[0];
@@ -500,7 +488,7 @@ export function PoolCard({
       label: 'Next reset',
       value: nextReset ? `+${formatPercent(nextReset.gain)} ${formatInstant(nextReset.t)}` : 'None',
     },
-    { label: `Burn, last ${burnWindow}h`, value: `${burn.toFixed(1)}%/h` },
+    { label: `Burn, last ${RECENT_PACE_HOURS}h`, value: `${burn.toFixed(1)}%/h` },
     {
       label: 'Typical week',
       value: profile
@@ -594,7 +582,6 @@ export function PoolCard({
           fableHistory={fableHistory}
           profile={profile}
           weeklyBurn={burn}
-          burnWindow={burnWindow}
           now={now}
           scale={scale}
           startMs={startMs}
@@ -706,7 +693,6 @@ interface FablePoolProps {
   fableHistory: Map<string, PoolHistoryPoint[]>;
   profile: UsageProfile | null;
   weeklyBurn: number;
-  burnWindow: number;
   now: number;
   scale: PoolScale;
   startMs: number;
@@ -725,7 +711,6 @@ function FablePool({
   fableHistory,
   profile,
   weeklyBurn,
-  burnWindow,
   now,
   scale,
   startMs,
@@ -739,14 +724,15 @@ function FablePool({
     const first = Math.min(
       ...accounts.map((account) => fableHistory.get(account.name)?.[0]?.t ?? Infinity)
     );
-    const recordedHours = Number.isFinite(first) ? (now - first * 1000) / HOUR_MS : burnWindow;
+    const recordedHours =
+      Number.isFinite(first) ? (now - first * 1000) / HOUR_MS : RECENT_PACE_HOURS;
     return burnRatePerHour(
       accounts,
       fableHistory,
-      Math.min(burnWindow, Math.max(0.5, recordedHours)),
+      Math.min(RECENT_PACE_HOURS, Math.max(0.5, recordedHours)),
       now
     );
-  }, [accounts, fableHistory, burnWindow, now]);
+  }, [accounts, fableHistory, now]);
   const pointsPerWeeklyPoint = useMemo(
     () => fablePerLongPoint(longAccounts, history, fableHistory, now),
     [longAccounts, history, fableHistory, now]
@@ -758,13 +744,13 @@ function FablePool({
   );
   const projectionEnd = Math.max(endMs, now + 14 * DAY_MS);
   const projection = useMemo(() => {
-    const weekly = projectedRate(profile, weeklyBurn, burnWindow, now);
+    const weekly = projectedRate(profile, weeklyBurn, RECENT_PACE_HOURS, now);
     const rate =
       profile !== null && pointsPerWeeklyPoint !== null
         ? (t: number) => weekly(t) * pointsPerWeeklyPoint
         : burn;
     return projectPool(accounts, rate, now, projectionEnd);
-  }, [accounts, profile, pointsPerWeeklyPoint, weeklyBurn, burnWindow, burn, now, projectionEnd]);
+  }, [accounts, profile, pointsPerWeeklyPoint, weeklyBurn, burn, now, projectionEnd]);
   const nextReset = projection.resets[0] ?? null;
   const out = accounts.filter((account) => account.remaining <= 1);
 

@@ -279,7 +279,10 @@ test('pool card renders headroom loss, recovery, and bands on both joint charts'
   await i18n.init({ lng: 'en', resources: { en: { translation: en } }, interpolation: { escapeValue: false } });
   const long = [seat('a', 98, 5), seat('b', 65, 72)];
   const short = [seat('a', 0, null, true), seat('b', 80, 2, true)];
+  // b burned a weekly point an hour over the last five hours, the window the forecast
+  // measures the recent pace over, and 20 points of its 5h window in the last hour.
   const history = historyByAccount([
+    { t: now / 1000 - 5 * 3600, auth: 'b', provider: 'claude', long_used: 0.6, long_reset: (now + 72 * HOUR) / 1000 },
     { t: now / 1000 - 3600, auth: 'b', provider: 'claude', long_used: 0.64, long_reset: (now + 72 * HOUR) / 1000,
       short_used: 0.6, short_reset: (now + 2 * HOUR) / 1000 },
     { t: now / 1000, auth: 'b', provider: 'claude', long_used: 0.65, long_reset: (now + 72 * HOUR) / 1000,
@@ -288,7 +291,7 @@ test('pool card renders headroom loss, recovery, and bands on both joint charts'
   const html = renderToStaticMarkup(createElement(I18nextProvider, { i18n }, createElement(PoolCard, {
     label: 'Claude', color: undefined, totalAccounts: 2, accounts: long, shortAccounts: short,
     history, shortHistory: shortWindowHistory(history), shapeHistory: [...history.values()],
-    burnWindow: 1, now, scale: viewScale(6 * HOUR), startMs: now - HOUR, endMs: now + 5 * HOUR,
+    now, scale: viewScale(6 * HOUR), startMs: now - HOUR, endMs: now + 5 * HOUR,
   })));
   expect(html.match(/Headroom lost/g)).toHaveLength(2);
   expect(html).toContain('Headroom returns');
@@ -315,7 +318,7 @@ test('pool card shows the Fable-only weekly window and the seats that are out of
   const card = (fableAccounts: PoolAccount[]) => renderToStaticMarkup(createElement(I18nextProvider, { i18n }, createElement(PoolCard, {
     label: 'Claude', color: undefined, totalAccounts: 2, accounts: long, shortAccounts: [], fableAccounts,
     history, shortHistory: shortWindowHistory(history), fableHistory: fableWindowHistory(history),
-    shapeHistory: [...history.values()], burnWindow: 1, now, scale: viewScale(6 * HOUR),
+    shapeHistory: [...history.values()], now, scale: viewScale(6 * HOUR),
     startMs: now - HOUR, endMs: now + 5 * HOUR,
   })));
   const html = card(fable);
@@ -337,7 +340,7 @@ test('the dashboard outlook lists the same gaps from the quota history alone', (
     { t: now / 1000, auth: 'b', provider: 'claude', long_used: 0.65, long_reset: (now + 72 * HOUR) / 1000,
       short_used: 0.8, short_reset: (now + 2 * HOUR) / 1000 },
   ];
-  const outlook = headroomOutlook(points, ['a', 'b'], (name) => name.toUpperCase(), 1, now)!;
+  const outlook = headroomOutlook(points, ['a', 'b'], (name) => name.toUpperCase(), now)!;
   expect(outlook.accounts.map((account) => account.displayName)).toEqual(['A', 'B']);
   const first = outlook.events[0];
   expect(first.start).toBeCloseTo(now + 0.5 * HOUR, 3);
@@ -350,6 +353,6 @@ test('the dashboard outlook lists the same gaps from the quota history alone', (
   expect(outlook.events.every((event) => event.start < now + 7 * 24 * HOUR)).toBe(true);
   expect(outlook.next === null || outlook.next >= now + 7 * 24 * HOUR).toBe(true);
   // A credential without history yet, or an empty pool, gives no outlook instead of a wrong one.
-  expect(headroomOutlook(points, ['a', 'b', 'c'], (name) => name, 1, now)).toBeNull();
-  expect(headroomOutlook(points, [], (name) => name, 1, now)).toBeNull();
+  expect(headroomOutlook(points, ['a', 'b', 'c'], (name) => name, now)).toBeNull();
+  expect(headroomOutlook(points, [], (name) => name, now)).toBeNull();
 });

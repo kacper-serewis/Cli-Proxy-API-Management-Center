@@ -258,6 +258,11 @@ export function projectJointPool(
 
 /** The 5h burn is measured over the last hour. */
 export const SHORT_BURN_HOURS = 1;
+/**
+ * The weekly "right now" that nudges the learned rhythm: the last five hours, the same as
+ * the menu bar app (`recentLongHours`), so both forecast alike.
+ */
+export const RECENT_PACE_HOURS = 5;
 
 /**
  * The joint forecast for a pool from its accounts and history: the weekly rhythm nudged by
@@ -270,13 +275,11 @@ export function forecastJointPool(input: {
   history: Map<string, PoolHistoryPoint[]>;
   shortHistory: Map<string, PoolHistoryPoint[]>;
   profile: UsageProfile | null;
-  /** Weekly burn over the last `burnWindow` hours. */
-  burn: number;
-  burnWindow: number;
   now: number;
   end: number;
 }): JointProjection {
-  const { accounts, shortAccounts, history, shortHistory, profile, burn, burnWindow, now } = input;
+  const { accounts, shortAccounts, history, shortHistory, profile, now } = input;
+  const burn = burnRatePerHour(accounts, history, RECENT_PACE_HOURS, now);
   const shortBurn = burnRatePerHour(shortAccounts, shortHistory, SHORT_BURN_HOURS, now, true);
   const ratio = shortPerLongPoint(accounts, history, shortHistory, now);
   const shares = new Map(
@@ -296,7 +299,7 @@ export function forecastJointPool(input: {
   return projectJointPool(
     headroomAccounts(accounts, history, now),
     headroomAccounts(shortAccounts, shortHistory, now),
-    projectedRate(profile, burn, burnWindow, now),
+    projectedRate(profile, burn, RECENT_PACE_HOURS, now),
     reactiveRate(profile, ratio, shortBurn, SHORT_BURN_HOURS, now),
     shares,
     now,
@@ -317,7 +320,6 @@ export function headroomOutlook(
   points: PoolHistoryPoint[],
   names: string[],
   displayNameFor: (name: string) => string,
-  burnWindow: number,
   now: number
 ): { events: HeadroomEvent[]; next: number | null; accounts: PoolAccount[] } | null {
   if (names.length === 0) return null;
@@ -346,8 +348,6 @@ export function headroomOutlook(
     history,
     shortHistory,
     profile: learnUsageProfile(shape, accounts, history, now),
-    burn: burnRatePerHour(accounts, history, burnWindow, now),
-    burnWindow,
     now,
     end,
   });

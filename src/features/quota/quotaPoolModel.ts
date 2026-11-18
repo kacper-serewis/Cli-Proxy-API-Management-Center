@@ -64,6 +64,12 @@ export interface PoolProjection {
 }
 
 export const WEEK_HOURS = 24 * 7;
+/**
+ * Two readings belong to the same quota window when their resets (unix seconds) are this
+ * close: the usage poll reports a reset a second early or late now and then. The menu bar
+ * app's QuotaModel.swift uses the same tolerance.
+ */
+const sameWindow = (a: number, b: number) => Math.abs(a - b) < 600;
 const PROJECTION_STEP_MS = 10 * 60 * 1000;
 /** Resets that give back less than this are not worth a label (usage readings jitter by 1). */
 const MIN_LABELLED_GAIN = 2;
@@ -189,11 +195,12 @@ export function burnRatePerHour(
         continue;
       }
       if (point.t * 1000 > now) break;
-      if (prev && prev.reset === current.reset) consumed += Math.max(0, current.used - prev.used);
+      if (prev && sameWindow(prev.reset, current.reset))
+        consumed += Math.max(0, current.used - prev.used);
       else if (fromZero && prev && prev.reset <= point.t) consumed += current.used;
       prev = current;
     }
-    if (prev && account.resetAtMs !== null && Math.round(account.resetAtMs / 1000) === prev.reset) {
+    if (prev && account.resetAtMs !== null && sameWindow(account.resetAtMs / 1000, prev.reset)) {
       consumed += Math.max(0, 100 - account.remaining - prev.used);
     }
   }
@@ -389,7 +396,7 @@ export function usageEvents(points: PoolHistoryPoint[], fromZero = false): [numb
   let high = 0;
   for (const point of points) {
     const used = point.long_used * 100;
-    if (reset !== point.long_reset) {
+    if (reset === null || !sameWindow(reset, point.long_reset)) {
       // 5h windows: one that follows an expired window starts from zero.
       if (fromZero && reset !== null && reset <= point.t && used > 0) {
         events.push([point.t * 1000, used]);
