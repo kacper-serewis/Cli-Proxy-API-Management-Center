@@ -407,7 +407,8 @@ export function PoolCard({
       reactiveRate(profile, ratio, shortBurn, SHORT_BURN_HOURS, now),
       shares,
       now,
-      projectionEnd
+      projectionEnd,
+      profile !== null
     );
   }, [
     accounts,

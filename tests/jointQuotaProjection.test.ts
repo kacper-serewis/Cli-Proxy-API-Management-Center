@@ -130,6 +130,75 @@ describe('joint quota forecast (same cases as CliproxyBar)', () => {
     ).toHaveLength(0);
   });
 
+  test('a seat in its weekly reserve hands over new work and only takes the overflow', () => {
+    // a reaches its reserve after an hour. b carries the work until its 5h window is
+    // full, a covers the two hours until that window resets: no gap.
+    const result = projectJointPool(
+      [seat('a', 82, 30), seat('b', 40, 100)],
+      [seat('a', 0, null, true), seat('b', 0, null, true)],
+      () => 2,
+      () => 30,
+      new Map([['a', 1]]),
+      now,
+      now + 8 * HOUR
+    );
+    expect(result.gaps).toHaveLength(0);
+    expect(result.short.resets).toHaveLength(2);
+    expect(result.short.resets[0].t).toBeCloseTo(now + 5 * HOUR, 3);
+    expect(result.short.resets[1].t).toBeCloseTo(now + 6 * HOUR, 3);
+    expect(result.short.resets[0].gain).toBeCloseTo(60, 6);
+    expect(result.short.resets[1].gain).toBeCloseTo(90, 6);
+    // a: 84 at the hand-over plus two hours of overflow; b: five hours of work.
+    expect(result.long.series.at(-1)!.v).toBeCloseTo(100 - 88 + (100 - 50), 6);
+  });
+
+  test('the weekly reserve is released once the expected usage is needed to finish it', () => {
+    // a has 9 points left and 2 points an hour are expected: kept while more than 18
+    // points are expected before its reset, so for three hours. After that it takes
+    // half of the work, which is what finishes it exactly at its reset.
+    const result = projectJointPool(
+      [seat('a', 90, 12), seat('b', 10, 120)],
+      [seat('a', 0, null, true), seat('b', 0, null, true)],
+      () => 2,
+      () => 10,
+      new Map([['a', 1]]),
+      now,
+      now + 13 * HOUR
+    );
+    expect(result.gaps).toHaveLength(0);
+    // b: three hours alone and two hours of half the work; a: five hours of half.
+    expect(result.short.resets[0].t).toBeCloseTo(now + 5 * HOUR, 3);
+    expect(Math.abs(result.short.resets[0].gain - 40)).toBeLessThan(1);
+    expect(Math.abs(result.short.resets[1].t - (now + 8 * HOUR))).toBeLessThan(0.1 * HOUR);
+    expect(Math.abs(result.short.resets[1].gain - 25)).toBeLessThan(1);
+    expect(result.long.resets[0].t).toBe(now + 12 * HOUR);
+    expect(Math.abs(result.long.resets[0].gain - 99)).toBeLessThan(0.5);
+    expect(Math.abs(result.long.series.at(-1)!.v - (100 - 2 + (100 - 25)))).toBeLessThan(0.5);
+    // With little usage expected nothing is held back: a works from the start.
+    const quiet = projectJointPool(
+      [seat('a', 90, 12), seat('b', 10, 120)],
+      [seat('a', 0, null, true), seat('b', 0, null, true)],
+      () => 1,
+      () => 10,
+      new Map([['a', 1]]),
+      now,
+      now + 6 * HOUR
+    );
+    expect(quiet.short.resets[0].gain).toBeCloseTo(50, 6);
+    // Without a forecast the router keeps no reserve, and neither does the projection.
+    const blind = projectJointPool(
+      [seat('a', 90, 12), seat('b', 10, 120)],
+      [seat('a', 0, null, true), seat('b', 0, null, true)],
+      () => 2,
+      () => 10,
+      new Map([['a', 1]]),
+      now,
+      now + 6 * HOUR,
+      false
+    );
+    expect(blind.short.resets[0].gain).toBeCloseTo(45, 6);
+  });
+
   test('readings retain their high water only within the current window', () => {
     const history = historyByAccount([
       {

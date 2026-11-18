@@ -4,6 +4,14 @@ import { HOUR_MS } from '@/utils/time/durations';
 // Keep in step with selector_soonest_reset.go and CliproxyBarCore/JointProjection.swift.
 export const SHORT_HEADROOM_LIMIT = 90;
 export const LONG_HEADROOM_LIMIT = 99;
+/** From this weekly usage a seat is kept for overflow: it only takes work when no other
+ * seat has headroom. One full 5h window costs about 15 weekly points. */
+export const LONG_RESERVE_LIMIT = 84;
+/** The reserve is released once the usage expected before the weekly reset is at most
+ * this many times what is left, so it is spent, not lost. Held on that line, the seat
+ * takes 1/RESERVE_COVER of the work and runs out at its reset. */
+export const RESERVE_COVER = 2;
+const DEMAND_STEP = 15 * 60 * 1000;
 const STEP = 5 * 60 * 1000;
 const EPS = 1e-8;
 
@@ -19,8 +27,10 @@ export interface JointProjection {
 
 /** One workload consumes both windows on the same seat. Keep observed workload shares
  * while a seat has headroom; move its share to the soonest weekly reset when it fills.
- * Stop spending during a gap (no queued work), resume at resets. Safety thresholds are
- * conservative: fallback requests may still succeed. Rates are midpoint samples, <=5m.
+ * A seat in its weekly reserve hands its share over too and only works when no other
+ * seat has headroom (chats already on it are assumed to finish soon). Stop spending
+ * during a gap (no queued work), resume at resets. Safety thresholds are conservative:
+ * fallback requests may still succeed. Rates are midpoint samples, <=5m.
  */
 export function projectJointPool(
   longAccounts: PoolAccount[],
@@ -29,7 +39,9 @@ export function projectJointPool(
   shortRate: (t: number) => number,
   shares: Map<string, number>,
   now: number,
-  end: number
+  end: number,
+  /** Whether `longRate` is a learned rhythm. Without a forecast the router keeps no reserve. */
+  reserve = true
 ): JointProjection {
   const state = longAccounts.map((long) => {
     const short = shortAccounts.find((a) => a.name === long.name);
@@ -65,6 +77,25 @@ export function projectJointPool(
   const eligible = (i: number) =>
     state[i].longUsed < LONG_HEADROOM_LIMIT - EPS &&
     (state[i].shortUsed === null || state[i].shortUsed! < SHORT_HEADROOM_LIMIT - EPS);
+  // Usage expected from now, cumulative on a 15-minute grid that grows as far as needed.
+  const cumulative = [0];
+  const demandBy = (at: number) => {
+    const steps = Math.max(0, (at - now) / DEMAND_STEP);
+    const last = Math.min(Math.ceil(steps), 4 * 24 * 60); // weekly resets lie within 60 days
+    while (cumulative.length <= last) {
+      const from = now + (cumulative.length - 1) * DEMAND_STEP;
+      const burn = Math.max(0, longRate(from + DEMAND_STEP / 2)) * (DEMAND_STEP / HOUR_MS);
+      cumulative.push(cumulative[cumulative.length - 1] + burn);
+    }
+    const floor = Math.min(Math.floor(steps), last);
+    return cumulative[floor] + (cumulative[last] - cumulative[floor]) * (steps - floor);
+  };
+  const reserved = (i: number, at: number) =>
+    reserve &&
+    state[i].longUsed >= LONG_RESERVE_LIMIT - EPS &&
+    Number.isFinite(state[i].longReset) &&
+    demandBy(state[i].longReset) - demandBy(at) >
+      RESERVE_COVER * (LONG_HEADROOM_LIMIT - state[i].longUsed) + EPS;
   let t = now;
   record(t);
   while (t < end) {
@@ -91,10 +122,12 @@ export function projectJointPool(
         record(t);
       }
     }
-    const order = state
-      .map((_, i) => i)
-      .filter(eligible)
-      .sort((a, b) => state[a].longReset - state[b].longReset || a - b);
+    const open = state.map((_, i) => i).filter(eligible);
+    const free = open.filter((i) => !reserved(i, t));
+    // Reserved seats take the overflow only when no other seat has headroom.
+    const order = (free.length > 0 ? free : open).sort(
+      (a, b) => state[a].longReset - state[b].longReset || a - b
+    );
     const nextReset = Math.min(...state.flatMap((a) => [a.longReset, a.shortReset]));
     if (order.length === 0) {
       if (!result.gaps.length || result.gaps[result.gaps.length - 1].end !== null)
@@ -105,7 +138,7 @@ export function projectJointPool(
     }
     if (result.gaps.length && result.gaps[result.gaps.length - 1].end === null)
       result.gaps[result.gaps.length - 1].end = t;
-    const weights = state.map((a, i) => (eligible(i) ? a.share : 0));
+    const weights = state.map((a, i) => (order.includes(i) ? a.share : 0));
     weights[order[0]] += Math.max(0, 1 - weights.reduce((sum, weight) => sum + weight, 0));
     const next = Math.min(t + STEP, end, nextReset);
     const longBurn = Math.max(0, longRate((t + next) / 2));
@@ -115,8 +148,12 @@ export function projectJointPool(
       const a = state[i],
         weight = weights[i];
       if (weight <= 0) continue;
-      if (longBurn > 0)
-        dt = Math.min(dt, ((LONG_HEADROOM_LIMIT - a.longUsed) / (longBurn * weight)) * HOUR_MS);
+      if (longBurn > 0) {
+        // Stop where the seat enters its reserve, so that is decided at the threshold.
+        const limit =
+          reserve && a.longUsed < LONG_RESERVE_LIMIT - EPS ? LONG_RESERVE_LIMIT : LONG_HEADROOM_LIMIT;
+        dt = Math.min(dt, ((limit - a.longUsed) / (longBurn * weight)) * HOUR_MS);
+      }
       if (shortBurn > 0 && a.shortUsed !== null)
         dt = Math.min(dt, ((SHORT_HEADROOM_LIMIT - a.shortUsed) / (shortBurn * weight)) * HOUR_MS);
     }

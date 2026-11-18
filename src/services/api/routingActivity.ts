@@ -58,6 +58,8 @@ export interface RoutingCandidate {
   long_reset?: string;
   short_usage: number;
   saturated: boolean;
+  /** In its weekly reserve: new chats come here only when the other accounts are full. */
+  reserved?: boolean;
   unavailable: boolean;
   retry_after?: string;
 }

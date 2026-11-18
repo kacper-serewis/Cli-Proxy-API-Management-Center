@@ -13,7 +13,11 @@ import type { RoutingCandidate, RoutingSession } from '@/services/api';
 import type { PoolHistoryPoint } from '@/features/quota/quotaPoolModel';
 import { TYPE_COLORS } from '@/utils/quota';
 import { accountProvider, shortAccountName } from '../accountNames';
-import { SHORT_HEADROOM_LIMIT, LONG_HEADROOM_LIMIT } from '../jointQuotaProjection';
+import {
+  SHORT_HEADROOM_LIMIT,
+  LONG_HEADROOM_LIMIT,
+  LONG_RESERVE_LIMIT,
+} from '../jointQuotaProjection';
 import styles from './QuotaAccounts.module.scss';
 
 /** New chats skip an account at this 5h usage. */
@@ -22,6 +26,8 @@ export const SHORT_SATURATION = SHORT_HEADROOM_LIMIT / 100;
 export const SHORT_DRAIN = 0.95;
 /** The router treats an account's week as used up at this level. */
 export const LONG_SATURATION = LONG_HEADROOM_LIMIT / 100;
+/** From this weekly usage an account is kept for overflow from the others. */
+export const LONG_RESERVE = LONG_RESERVE_LIMIT / 100;
 /** A chat counts as active when it sent a request this recently. */
 const ACTIVE_MS = 30 * 60 * 1000;
 
@@ -103,7 +109,9 @@ export function QuotaAccounts({
             <>
               New chats go to the account whose week resets soonest, skipping any at{' '}
               {SHORT_SATURATION * 100}% of its 5-hour window. At {SHORT_DRAIN * 100}%, chats move to
-              another account.
+              another account. The last {Math.round((LONG_SATURATION - LONG_RESERVE) * 100)}% of a
+              week is kept for when the other account is full, until the usage expected before its
+              reset is needed to finish it.
             </>
           )}
         </span>
@@ -209,9 +217,9 @@ function AccountLine({
       <Meter
         label="Week"
         used={longUsed}
-        warnAt={adaptive?.long ? Math.max(0, 1 - adaptive.long.reserve - 0.02) : 0.85}
+        warnAt={adaptive?.long ? Math.max(0, 1 - adaptive.long.reserve - 0.02) : LONG_RESERVE}
         badAt={adaptive?.long ? Math.max(0, 1 - adaptive.long.reserve) : LONG_SATURATION}
-        marks={adaptive?.long ? [Math.max(0, 1 - adaptive.long.reserve)] : []}
+        marks={adaptive?.long ? [Math.max(0, 1 - adaptive.long.reserve)] : [LONG_RESERVE]}
         caption={
           adaptive?.long?.inactive
             ? t('adaptive_routing.inactive')
@@ -288,6 +296,7 @@ function accountStatus(
     return { label: 'Chats moving off', tone: 'bad' };
   if (candidate.saturated) return { label: 'Skipped for new chats', tone: 'warn' };
   if (row.rank === 0) return { label: 'Gets the next new chat', tone: 'next' };
+  if (candidate.reserved) return { label: 'Kept for overflow', tone: 'ok' };
   if (!candidate.known) return { label: 'Quota not seen yet', tone: 'muted' };
   return { label: `Next in line #${row.rank + 1}`, tone: 'ok' };
 }
